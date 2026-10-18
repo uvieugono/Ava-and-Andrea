@@ -6,6 +6,7 @@ import { randomBytes } from 'crypto';
 import { GymStore, INSPO_CATEGORIES, openStore } from './store.ts';
 import { openPostgresStore } from './postgres.ts';
 import { defaultNotifiers } from './notifiers.ts';
+import { defaultStorage, StorageError, type Storage } from './storage.ts';
 import type { Notifiers } from './workflow.ts';
 
 interface AuthedRequest extends Request {
@@ -59,13 +60,13 @@ function fail(res: Response, error: unknown, fallback = 400) {
   res.status(STATUS_BY_CODE[code] ?? fallback).json({ code });
 }
 
-export async function createApp(options?: { dbPath?: string; databaseUrl?: string; webhookSecret?: string; devMatch?: boolean; now?: () => Date; notifiers?: Notifiers; uploadDir?: string }) {
+export async function createApp(options?: { dbPath?: string; databaseUrl?: string; webhookSecret?: string; devMatch?: boolean; now?: () => Date; notifiers?: Notifiers; uploadDir?: string; storage?: Storage }) {
   const dbPath = options?.dbPath || process.env.GYMTRACK_DB || path.join(process.cwd(), 'data', 'gymtrack.json');
   const databaseUrl = options?.databaseUrl ?? (options?.dbPath ? undefined : process.env.DATABASE_URL);
   const now = options?.now ?? (() => new Date());
   const notifiers = options?.notifiers ?? defaultNotifiers();
   const uploadDir = options?.uploadDir || process.env.GYMTRACK_UPLOADS || path.join(path.dirname(dbPath), 'uploads');
-  fs.mkdirSync(uploadDir, { recursive: true });
+  const storage = options?.storage ?? defaultStorage(uploadDir);
   const store = databaseUrl ? await openPostgresStore(databaseUrl, now, notifiers) : openStore(dbPath, now, notifiers);
   const webhookSecret = options?.webhookSecret ?? process.env.GYMTRACK_WEBHOOK_SECRET ?? 'dev-webhook-secret';
   const devMatch = options?.devMatch ?? (process.env.GYMTRACK_DEV_MATCH !== '0' && process.env.NODE_ENV !== 'production');
@@ -503,15 +504,24 @@ export async function createApp(options?: { dbPath?: string; databaseUrl?: strin
       }
     }
     const fileName = `${randomBytes(12).toString('hex')}${isVideo ? VIDEO_EXT[mime] : DOCUMENT_MIME[mime]}`;
-    await fs.promises.writeFile(path.join(uploadDir, fileName), body);
+    const displayName = String(req.query.name ?? 'upload').slice(0, 200);
+    let stored;
+    try {
+      stored = await storage.put(body, mime, displayName, fileName);
+    } catch (error) {
+      const code = error instanceof StorageError ? error.code : 'STORAGE_FAILED';
+      console.error('Upload could not be stored', error instanceof Error ? error.message : error);
+      res.status(502).json({ code });
+      return;
+    }
     const record = await store.saveUpload({
       ownerId: user.id,
       clubId: user.clubId ?? user.selectedClubId ?? null,
       scope,
       mime,
-      name: String(req.query.name ?? 'upload').slice(0, 200),
+      name: displayName,
       size: body.length,
-      file: fileName,
+      ...stored,
     });
     res.status(201).json({ id: record.id, url: `/api/uploads/${record.id}`, size: record.size, mime: record.mime });
   }));
@@ -528,15 +538,10 @@ export async function createApp(options?: { dbPath?: string; databaseUrl?: strin
       res.status(upload.scope === 'private' && !viewer ? 401 : 403).json({ code: 'FORBIDDEN' });
       return;
     }
-    const filePath = path.join(uploadDir, upload.file);
-    if (!fs.existsSync(filePath)) {
-      res.status(404).json({ code: 'NOT_FOUND' });
-      return;
-    }
     res.setHeader('content-type', upload.mime);
     res.setHeader('cache-control', upload.scope === 'public' ? 'public, max-age=3600' : 'private, no-store');
     res.setHeader('content-disposition', `inline; filename="${upload.name.replace(/[^\w.\- ]/g, '_')}"`);
-    res.sendFile(path.resolve(filePath));
+    await storage.send(upload, req, res);
   }));
 
   app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {

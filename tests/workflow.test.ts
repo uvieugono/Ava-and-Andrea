@@ -359,3 +359,61 @@ test('SolyntaFlow: enquiries become tickets and fee reminders are sent as ticket
     t.server.close();
   }
 });
+
+test('Google Drive storage: files go to the one folder and are served back only through GymTrack', async () => {
+  const { driveStorage } = await import('../server/storage.ts');
+  const calls: { url: string; method: string; headers: Record<string, string>; body?: any }[] = [];
+  const bytes = Buffer.from('0123456789');
+  const fake = (async (url: string, init: RequestInit = {}) => {
+    const headers = (init.headers ?? {}) as Record<string, string>;
+    calls.push({ url, method: String(init.method ?? 'GET'), headers, body: init.body });
+    if (url.includes('uploadType=resumable')) return new Response('{}', { status: 200, headers: { location: 'https://upload.test/session1' } });
+    if (url === 'https://upload.test/session1') return new Response(JSON.stringify({ id: 'drive-1' }), { status: 200 });
+    if (url.includes('/drive/v3/files/drive-1?alt=media')) {
+      return headers.range
+        ? new Response(bytes.subarray(2, 6), { status: 206, headers: { 'content-range': 'bytes 2-5/10', 'content-length': '4' } })
+        : new Response(bytes, { status: 200, headers: { 'content-length': '10' } });
+    }
+    return new Response('{}', { status: 404 });
+  }) as unknown as typeof fetch;
+  const drive = driveStorage('FOLDER', async () => 'tok', fake);
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gymtrack-drive-'));
+  const app = await createApp({ dbPath: path.join(dir, 'db.json'), storage: drive, devMatch: false, notifiers: {} });
+  const server = app.listen(0);
+  await once(server, 'listening');
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  try {
+    const call = async (method: string, url: string, token?: string, body?: unknown) => {
+      const r = await fetch(`${base}${url}`, { method, headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
+      return { status: r.status, body: (await r.json().catch(() => ({}))) as any };
+    };
+    const club = await call('POST', '/api/auth/register-club', undefined, { clubName: 'A', city: 'Lagos', adminName: 'Ad', email: 'drive@club.test', password: 'club-pass-1', phone: '0803000000' });
+    const ava = await call('POST', '/api/auth/signup-student', undefined, { name: 'Ava', email: 'drive@gym.test', password: 'gym-pass-1', phone: '08031234567', dateOfBirth: '2014-01-01', selectedClubId: club.body.club.id });
+    const sent = await fetch(`${base}/api/uploads?name=clip.mp4`, { method: 'POST', headers: { 'content-type': 'video/mp4', authorization: `Bearer ${ava.body.token}` }, body: bytes });
+    assert.equal(sent.status, 201);
+    const { url } = (await sent.json()) as { url: string };
+    const start = calls.find((c) => c.url.includes('uploadType=resumable'))!;
+    assert.equal(start.headers.authorization, 'Bearer tok');
+    assert.deepEqual(JSON.parse(start.body).parents, ['FOLDER']);
+
+    // Served through GymTrack with its own access check, including video range requests
+    assert.equal((await fetch(`${base}${url}`)).status, 401);
+    const whole = await fetch(`${base}${url}?token=${ava.body.token}`);
+    assert.equal(whole.status, 200);
+    assert.equal(Buffer.from(await whole.arrayBuffer()).toString(), '0123456789');
+    const part = await fetch(`${base}${url}?token=${ava.body.token}`, { headers: { range: 'bytes=2-5' } });
+    assert.equal(part.status, 206);
+    assert.equal(Buffer.from(await part.arrayBuffer()).toString(), '2345');
+    const other = await call('POST', '/api/auth/register-club', undefined, { clubName: 'B', city: 'Lagos', adminName: 'Bd', email: 'drive2@club.test', password: 'club-pass-1', phone: '0803000001' });
+    assert.equal((await fetch(`${base}${url}?token=${other.body.token}`)).status, 403);
+  } finally {
+    server.close();
+  }
+
+  // Drive refusing for lack of storage is reported plainly
+  const quota = driveStorage('F', async () => 't', (async (u: string) => u.includes('resumable')
+    ? new Response(JSON.stringify({ error: { message: 'quota', errors: [{ reason: 'storageQuotaExceeded' }] } }), { status: 403 })
+    : new Response('{}')) as unknown as typeof fetch);
+  await assert.rejects(() => quota.put(Buffer.from('x'), 'video/mp4', 'x.mp4', 'x'), /Shared Drive/);
+});

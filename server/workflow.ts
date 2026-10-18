@@ -87,7 +87,10 @@ export interface UploadRecord {
   mime: string;
   name: string;
   size: number;
-  file: string;
+  /** File name on this server's disk, when stored there. */
+  file?: string;
+  /** Google Drive file id, when stored in Drive. */
+  driveFileId?: string;
   createdAt: string;
 }
 
