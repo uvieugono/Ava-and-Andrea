@@ -14,6 +14,7 @@ import type { Notifiers } from './workflow.ts';
 export function solyntaflowNotifiers(env: NodeJS.ProcessEnv = process.env, fetcher: typeof fetch = fetch): Pick<Notifiers, 'enquiry' | 'whatsapp'> | null {
   const token = env.SOLYNTAFLOW_TOKEN;
   if (!token) return null;
+  const template = env.SOLYNTAFLOW_FEE_TEMPLATE ?? 'gymtrack_fee_reminder_v1';
   const base = (env.SOLYNTAFLOW_API_URL || 'https://solyntaflow.uc.r.appspot.com').replace(/\/+$/, '');
 
   async function call(path: string, body: unknown) {
@@ -52,10 +53,31 @@ export function solyntaflowNotifiers(env: NodeJS.ProcessEnv = process.env, fetch
         customer_name: gymnastName,
         customer_phone: `+${to}`,
       });
-      const sent = await call('messages/', { ticket: ticket.id, body: `${clubName}: ${message}` });
-      if (sent.delivery_status === 'sent') return { status: 'sent', detail: `ticket ${ticket.ticket_number ?? ticket.id}` };
-      const reason = String(sent.delivery_error || 'SolyntaFlow did not confirm delivery.');
-      return { status: 'failed', detail: sent.delivery_status === 'unknown' ? `Not confirmed: ${reason}` : reason };
+      const label = `ticket ${ticket.ticket_number ?? ticket.id}`;
+      const outcome = (result: Record<string, any>) => {
+        if (result.delivery_status === 'sent') return { status: 'sent' as const, detail: label };
+        const reason = String(result.delivery_error || 'SolyntaFlow did not confirm delivery.');
+        return { status: 'failed' as const, detail: result.delivery_status === 'unknown' ? `Not confirmed: ${reason}` : reason };
+      };
+
+      // An approved template reaches people who have not written to the number lately.
+      let templateFailure = '';
+      if (template) {
+        try {
+          const result = await call(`tickets/${ticket.id}/send-template/`, { template, params: [gymnastName, clubName, message] });
+          const done = outcome(result);
+          // Sent, or not confirmed (it may have arrived): never send a second copy.
+          if (done.status === 'sent' || result.delivery_status === 'unknown') return done;
+          templateFailure = done.detail;
+        } catch (error) {
+          templateFailure = error instanceof Error ? error.message : 'template send failed';
+        }
+      }
+
+      // Otherwise a plain reply, which only arrives if they wrote to the number in the last 24 hours.
+      const plain = outcome(await call('messages/', { ticket: ticket.id, body: `${clubName}: ${message}` }));
+      if (plain.status === 'failed' && templateFailure) return { status: 'failed', detail: `Template: ${templateFailure}. Plain message: ${plain.detail}` };
+      return plain;
     },
   };
 }

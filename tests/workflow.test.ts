@@ -326,7 +326,9 @@ test('SolyntaFlow: enquiries become tickets and fee reminders are sent as ticket
       ticketNo += 1;
       return new Response(JSON.stringify({ id: ticketNo, ticket_number: `TKT-${ticketNo}` }), { status: 201 });
     }
-    return new Response(JSON.stringify(body.body.includes('FAIL') ? { delivery_status: 'failed', delivery_error: 'Outside the 24 hour window' } : { delivery_status: 'sent' }), { status: 201 });
+    const text = String(body.body ?? body.params?.[2] ?? '');
+    if (url.endsWith('/send-template/') && text.includes('PLAINONLY')) return new Response(JSON.stringify({ delivery_status: 'failed', delivery_error: 'Template not approved (132001)' }), { status: 201 });
+    return new Response(JSON.stringify(text.includes('FAIL') ? { delivery_status: 'failed', delivery_error: 'Outside the 24 hour window' } : { delivery_status: 'sent' }), { status: 201 });
   }) as unknown as typeof fetch;
 
   assert.equal(solyntaflowNotifiers({} as NodeJS.ProcessEnv, fake), null);
@@ -341,11 +343,19 @@ test('SolyntaFlow: enquiries become tickets and fee reminders are sent as ticket
   const ok = await soly.whatsapp!({ to: '2348031234567', gymnastName: 'Ava', clubName: 'Alpha', message: 'Fee due' });
   assert.equal(ok.status, 'sent');
   assert.equal(seen[1].body.customer_phone, '+2348031234567');
-  assert.equal(seen[2].url, 'https://soly.test/api/customer-service/messages/');
-  assert.equal(seen[2].body.ticket, 2);
+  // the approved template is tried first
+  assert.equal(seen[2].url, 'https://soly.test/api/customer-service/tickets/2/send-template/');
+  assert.deepEqual(seen[2].body, { template: 'gymtrack_fee_reminder_v1', params: ['Ava', 'Alpha', 'Fee due'] });
 
-  const bad = await soly.whatsapp!({ to: '2348031234567', gymnastName: 'Ava', clubName: 'Alpha', message: 'FAIL' });
+  // Template refused, plain message delivered (they wrote in the last 24 hours)
+  const fallback = await soly.whatsapp!({ to: '2348031234567', gymnastName: 'Ava', clubName: 'Alpha', message: 'PLAINONLY' });
+  assert.equal(fallback.status, 'sent');
+  assert.equal(seen[seen.length - 1].url, 'https://soly.test/api/customer-service/messages/');
+
+  // Both refused: the reason says what each one said
+  const bad = await soly.whatsapp!({ to: '2348031234567', gymnastName: 'Ava', clubName: 'Alpha', message: 'PLAINONLY FAIL' });
   assert.equal(bad.status, 'failed');
+  assert.match(bad.detail, /132001/);
   assert.match(bad.detail, /24 hour/);
 
   // The contact form uses it: the enquiry is saved and filed, with no email needed
