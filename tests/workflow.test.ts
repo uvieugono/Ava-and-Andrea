@@ -406,6 +406,7 @@ test('Google Drive storage: files go to the one folder and are served back only 
     const start = calls.find((c) => c.url.includes('uploadType=resumable'))!;
     assert.equal(start.headers.authorization, 'Bearer tok');
     assert.deepEqual(JSON.parse(start.body).parents, ['FOLDER']);
+    assert.equal(calls.some((call) => call.url.includes('/permissions')), false);
 
     // Served through GymTrack with its own access check, including video range requests
     assert.equal((await fetch(`${base}${url}`)).status, 401);

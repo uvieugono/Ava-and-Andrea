@@ -9,7 +9,8 @@
     "start": "node dist/server.cjs",
     "preview": "vite preview",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
-    "test": "node --import tsx --test tests/signup.test.ts tests/requirements.test.ts tests/workflow.test.ts",
+    "test": "node --import tsx --test tests/signup.test.ts tests/requirements.test.ts tests/workflow.test.ts tests/driveAuth.test.ts",
+    "drive:auth": "tsx scripts/drive-auth.ts",
     "lint": "tsc --noEmit"
   },
   "dependencies": {

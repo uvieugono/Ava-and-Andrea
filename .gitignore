@@ -6,4 +6,6 @@ coverage/
 *.log
 .env*
 !.env.example
+# Refresh token from `npm run drive:auth`. Never commit.
+.drive-oauth.json
 /data/
