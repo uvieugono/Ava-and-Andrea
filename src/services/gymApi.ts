@@ -267,6 +267,7 @@ const UPLOAD_MESSAGES: Record<string, string> = {
   PARENT_REQUIRED: 'A parent must accept before this video can be published.',
   STORAGE_FAILED: 'The file could not be saved to storage. Try again in a moment.',
   DRIVE_QUOTA: 'The file could not be saved to storage. Please tell the GymTrack team.',
+  DRIVE_AUTH: 'Google Drive sign-in needs to be renewed before files can be saved. Please tell the GymTrack team.',
 };
 
 /** Sends a file to the server. Resolves with its stored address only once the server has saved it. */
