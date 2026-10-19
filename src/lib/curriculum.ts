@@ -1,5 +1,6 @@
 import { Skill, SkillStatus, USAGLevel } from '../types';
 import { WORKOUTS } from '../data/gymData';
+import { levelHasRequirements } from '../data/curriculumUpdates';
 
 export const CURRICULUM_TIERS: { id: string; label: string; levels: USAGLevel[] }[] = [
   { id: 'BRONZE', label: 'Bronze', levels: [1, 2] },
@@ -26,6 +27,12 @@ export function skillIsRequired(skill: Skill, offersBars: boolean, offersBeam: b
   if (skill.category === 'BARS' && !offersBars) return false;
   if (skill.category === 'BEAM' && !offersBeam) return false;
   return true;
+}
+
+/** The skills a gymnast has to finish at a level. Levels with no standard requirements have none. */
+export function requiredSkillsFor(skills: Skill[], level: number, offersBars: boolean, offersBeam: boolean) {
+  if (!levelHasRequirements(level)) return [];
+  return skills.filter((skill) => skill.level === level && skillIsRequired(skill, offersBars, offersBeam));
 }
 
 export function matchingTutorial(skill: Skill) {

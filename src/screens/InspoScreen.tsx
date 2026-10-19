@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { gymApi, InspoPost } from '../services/gymApi';
+import { gymApi, InspoPost, MAX_VIDEO_MB, UploadError, uploadFile } from '../services/gymApi';
+import { useGym } from '../context/GymContext';
 
 const CATEGORIES = ['All', 'Floor', 'Vault', 'Bars', 'Beam', 'Tumbling', 'Flexibility', 'Strength', 'Skills', 'Training', 'Competitions', 'Challenges', 'Progress'];
 
@@ -16,7 +17,18 @@ const EMPTY = {
   previewUrl: '',
 };
 
+const PUBLISH_ERRORS: Record<string, string> = {
+  PARENT_REQUIRED: 'A parent must accept before this video can be published.',
+  PAYMENT_REQUIRED: 'Your free week has ended. Payment is needed before you can publish.',
+  VIDEO_REQUIRED: 'Choose a video first.',
+  VIDEO_INVALID: 'That video could not be used. Choose it again.',
+  SKILL_REQUIRED: 'Say which skill the video shows.',
+  CATEGORY: 'Choose a category.',
+  UNAUTHORIZED: 'You are signed out. Sign in again to publish.',
+};
+
 export const InspoScreen: React.FC = () => {
+  const { skills, user } = useGym();
   const [category, setCategory] = useState('All');
   const [followingOnly, setFollowingOnly] = useState(false);
   const [posts, setPosts] = useState<InspoPost[]>([]);
@@ -28,6 +40,9 @@ export const InspoScreen: React.FC = () => {
   const [showNotes, setShowNotes] = useState(false);
   const [replyTo, setReplyTo] = useState<string | null>(null);
   const [draft, setDraft] = useState(EMPTY);
+  const [file, setFile] = useState<File | null>(null);
+  const [publishing, setPublishing] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
   const load = async (next = category, saved = savedOnly, following = followingOnly) => {
     if (saved) {
@@ -42,40 +57,80 @@ export const InspoScreen: React.FC = () => {
     gymApi.notifications().then((result) => setNotes(result.notifications)).catch(() => setNotes([]));
   }, [category, savedOnly, followingOnly]);
 
-  const onFile = (file: File | undefined) => {
-    if (!file) return;
-    if (file.size > 6 * 1024 * 1024) {
-      setNotice('That clip is over 6 MB. Use a shorter clip so it can be stored.');
+  const closeForm = () => {
+    if (draft.previewUrl) URL.revokeObjectURL(draft.previewUrl);
+    setOpen(false);
+    setPreviewing(false);
+    setDraft(EMPTY);
+    setFile(null);
+    setFormError(null);
+  };
+
+  const onFile = (picked: File | undefined) => {
+    if (!picked) return;
+    setFormError(null);
+    if (!picked.type.startsWith('video/')) {
+      setFormError('That is not a video. Choose an MP4, MOV or WebM file.');
       return;
     }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const url = typeof reader.result === 'string' ? reader.result : '';
-      setDraft((prev) => ({ ...prev, videoUrl: url, previewUrl: url }));
-    };
-    reader.readAsDataURL(file);
+    if (picked.size > MAX_VIDEO_MB * 1024 * 1024) {
+      setFormError(`That clip is over ${MAX_VIDEO_MB} MB. Use a shorter clip.`);
+      return;
+    }
+    if (draft.previewUrl) URL.revokeObjectURL(draft.previewUrl);
+    setFile(picked);
+    setDraft((prev) => ({ ...prev, previewUrl: URL.createObjectURL(picked) }));
   };
 
   const upload = async (event: React.FormEvent) => {
     event.preventDefault();
+    setFormError(null);
     if (!previewing) {
+      if (!file) {
+        setFormError('Choose a video first.');
+        return;
+      }
+      if (!draft.skill.trim()) {
+        setFormError('Say which skill the video shows.');
+        return;
+      }
       setPreviewing(true);
       return;
     }
-    setNotice(null);
+    if (!file) {
+      setFormError('Choose a video first.');
+      return;
+    }
+    setPublishing(true);
     try {
+      // 1. Send the video to GymTrack. 2. Publish the post that points at it.
+      const stored = await uploadFile(file, { scope: 'public' });
       await gymApi.createInspo({
-        ...draft,
+        skill: draft.skill,
+        category: draft.category,
+        clubTag: draft.clubTag,
+        caption: draft.caption,
+        visibility: draft.visibility,
+        showAge: draft.showAge,
+        showLevel: draft.showLevel,
         hashtags: draft.hashtags.split(/\s+/).filter(Boolean),
-        videoUrl: draft.videoUrl || '',
+        videoUrl: stored.url,
       });
-      setOpen(false);
-      setPreviewing(false);
-      setDraft(EMPTY);
-      await load();
+      closeForm();
+      setCategory('All');
+      setSavedOnly(false);
+      setFollowingOnly(false);
+      await load('All', false, false);
+      setNotice('Your video is published.');
     } catch (err) {
-      const code = (err as { body?: { code?: string } }).body?.code;
-      setNotice(code === 'PARENT_REQUIRED' ? 'A parent must accept before this video can be published.' : 'Sign in to upload.');
+      if (err instanceof UploadError) {
+        setFormError(err.message);
+      } else {
+        const code = (err as { body?: { code?: string } }).body?.code ?? '';
+        setFormError(PUBLISH_ERRORS[code] ?? 'The video could not be published. Check your connection and try again.');
+      }
+    } finally {
+      setPublishing(false);
     }
   };
 
@@ -106,7 +161,7 @@ export const InspoScreen: React.FC = () => {
           <button type="button" onClick={() => setShowNotes((value) => !value)} className="px-3 py-2 rounded-full border border-[#E4D7EE] text-sm">
             Notifications{notes.length ? ` (${notes.length})` : ''}
           </button>
-          <button type="button" onClick={() => { setOpen(true); setPreviewing(false); }} className="px-4 py-2 rounded-full bg-[#5C2A6E] text-white text-sm">
+          <button type="button" onClick={() => { setOpen(true); setPreviewing(false); setFormError(null); setDraft((prev) => ({ ...prev, clubTag: prev.clubTag || user.clubName })); }} className="px-4 py-2 rounded-full bg-[#5C2A6E] text-white text-sm">
             + Upload Video
           </button>
         </div>
@@ -141,8 +196,8 @@ export const InspoScreen: React.FC = () => {
 
       {posts.map((post) => (
         <article key={post.id} className="bg-white rounded-2xl border border-[#E4D7EE] overflow-hidden">
-          {post.videoUrl?.startsWith('data:video') || post.videoUrl?.startsWith('blob:') || /\.(mp4|webm)(\?|$)/i.test(post.videoUrl || '') ? (
-            <video src={post.videoUrl} controls className="w-full aspect-video bg-black" />
+          {post.videoUrl?.startsWith('data:video') || post.videoUrl?.startsWith('blob:') || post.videoUrl?.startsWith('/api/uploads/') || /\.(mp4|webm)(\?|$)/i.test(post.videoUrl || '') ? (
+            <video src={post.videoUrl} controls preload="metadata" className="w-full aspect-video bg-black" />
           ) : (
             <div className="aspect-video bg-[#241628] text-white flex items-center justify-center text-sm px-4 text-center">{post.skill}</div>
           )}
@@ -200,7 +255,10 @@ export const InspoScreen: React.FC = () => {
             {draft.previewUrl && <video src={draft.previewUrl} controls className="w-full rounded-xl bg-black" />}
             {!previewing && (
               <>
-                <input value={draft.skill} onChange={(e) => setDraft({ ...draft, skill: e.target.value })} placeholder="Skill" className="w-full rounded-xl border border-[#E4D7EE] px-3 py-2 text-sm" />
+                <input list="connect-skills" value={draft.skill} onChange={(e) => setDraft({ ...draft, skill: e.target.value })} placeholder="Skill" className="w-full rounded-xl border border-[#E4D7EE] px-3 py-2 text-sm" />
+                <datalist id="connect-skills">
+                  {Array.from(new Set(skills.filter((item) => item.level === user.level).map((item) => item.name))).map((name) => <option key={name} value={name} />)}
+                </datalist>
                 <select value={draft.category} onChange={(e) => setDraft({ ...draft, category: e.target.value })} className="w-full rounded-xl border border-[#E4D7EE] px-3 py-2 text-sm">
                   {CATEGORIES.filter((item) => item !== 'All').map((item) => <option key={item}>{item}</option>)}
                 </select>
@@ -214,7 +272,8 @@ export const InspoScreen: React.FC = () => {
                 </select>
                 <label className="text-sm flex gap-2"><input type="checkbox" checked={draft.showLevel} onChange={(e) => setDraft({ ...draft, showLevel: e.target.checked })} /> Show level</label>
                 <label className="text-sm flex gap-2"><input type="checkbox" checked={draft.showAge} onChange={(e) => setDraft({ ...draft, showAge: e.target.checked })} /> Show age</label>
-                <input type="file" accept="video/*" capture="environment" onChange={(e) => onFile(e.target.files?.[0])} className="text-sm" />
+                <input type="file" accept="video/*" onChange={(e) => onFile(e.target.files?.[0])} className="text-sm" />
+                {file && <p className="text-xs text-[#5C4A68]">{file.name} · {(file.size / (1024 * 1024)).toFixed(1)} MB</p>}
               </>
             )}
             {previewing && (
@@ -225,9 +284,10 @@ export const InspoScreen: React.FC = () => {
                 <p>Who can view: {draft.visibility}</p>
               </div>
             )}
+            {formError && <p className="text-sm text-red-600" role="alert">{formError}</p>}
             <div className="flex gap-2">
-              <button type="button" onClick={() => { setOpen(false); setPreviewing(false); }} className="flex-1 py-2 rounded-full border border-[#E4D7EE] text-sm">Close</button>
-              <button className="flex-1 py-2 rounded-full bg-[#5C2A6E] text-white text-sm">{previewing ? 'Publish' : 'Preview'}</button>
+              <button type="button" disabled={publishing} onClick={() => { if (previewing) { setPreviewing(false); setFormError(null); } else closeForm(); }} className="flex-1 py-2 rounded-full border border-[#E4D7EE] text-sm">{previewing ? 'Back' : 'Close'}</button>
+              <button disabled={publishing} className="flex-1 py-2 rounded-full bg-[#5C2A6E] text-white text-sm disabled:opacity-60">{publishing ? 'Publishing…' : previewing ? 'Publish' : 'Preview'}</button>
             </div>
           </div>
         </form>

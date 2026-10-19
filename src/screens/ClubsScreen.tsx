@@ -3,6 +3,7 @@ import { useGym } from '../context/GymContext';
 import { RegisteredClub, ClubDirectoryItem } from '../types';
 import { AVAILABLE_GYMNASTICS_CLUBS } from '../data/gymData';
 import { VERIFIED_CLUBS } from '../data/verifiedClubs';
+import { PublicImage } from '../components/PublicImage';
 import { 
   Building2, 
   Search, 
@@ -29,7 +30,7 @@ import {
 } from 'lucide-react';
 
 export const ClubsScreen: React.FC = () => {
-  const { registeredClubs, user, setCurrentTab, setUserRole } = useGym();
+  const { registeredClubs, user, setCurrentTab } = useGym();
   const [searchQuery, setSearchQuery] = useState('');
   const [cityFilter, setCityFilter] = useState<'All' | 'Lagos' | 'Abuja'>('All');
   const [nearCity, setNearCity] = useState<string | null>(null);
@@ -128,7 +129,6 @@ export const ClubsScreen: React.FC = () => {
 
   const handleGoToDashboard = () => {
     setShowRegisterModal(false);
-    setUserRole('CLUB_ADMIN');
     setCurrentTab('dashboard');
   };
 
@@ -151,9 +151,13 @@ export const ClubsScreen: React.FC = () => {
         <div className="space-y-3">
           {VERIFIED_CLUBS.filter((club) => cityFilter === 'All' || club.city === cityFilter).filter((club) => {
             const q = searchQuery.trim().toLowerCase();
-            return !q || `${club.name} ${club.city} ${club.address ?? ''} ${club.coach ?? ''}`.toLowerCase().includes(q);
+            return !q || `${club.name} ${club.city} ${club.areas ?? ''} ${club.address ?? ''} ${club.coach ?? ''}`.toLowerCase().includes(q);
           }).map((club) => (
-            <article key={club.id} className="bg-white border border-[#E4D7EE] rounded-2xl p-4 space-y-2">
+            <article key={club.id} className="bg-white border border-[#E4D7EE] rounded-2xl overflow-hidden">
+              {club.image && (
+                <PublicImage base={club.image} alt={`${club.name}`} className="w-full h-48 object-cover" fallback={null} />
+              )}
+              <div className="p-4 space-y-2">
               <div className="flex items-center gap-3">
                 <div className="w-14 h-14 rounded-xl bg-[#F4EEF8] flex items-center justify-center text-[10px] text-[#5C4A68] text-center px-1 leading-tight">
                   {club.logo ? <img src={club.logo} alt="" className="w-full h-full object-cover rounded-xl" /> : 'Logo not on file'}
@@ -163,7 +167,8 @@ export const ClubsScreen: React.FC = () => {
                   <p className="text-sm text-[#5C4A68]">{club.city}</p>
                 </div>
               </div>
-              <p className="text-sm">{club.address ?? 'Address not on file'}</p>
+              {club.areas && <p className="text-sm">Areas: {club.areas}</p>}
+              <p className="text-sm">{club.address ?? (club.areas ? 'Street address not on file' : 'Address not on file')}</p>
               <p className="text-sm">{club.phone ? <a href={`tel:${club.phone.split(',')[0].trim()}`}>{club.phone}</a> : 'Telephone not on file'}</p>
               <p className="text-sm">{club.coach ? `Coach: ${club.coach}` : 'Coach name not on file'}</p>
               <div className="flex flex-wrap gap-3 text-sm">
@@ -173,6 +178,7 @@ export const ClubsScreen: React.FC = () => {
                 {club.youtube && <a className="text-[#5C2A6E]" href={club.youtube} target="_blank" rel="noreferrer">YouTube</a>}
               </div>
               {club.missing.length > 0 && <p className="text-xs text-[#5C4A68]">Still to add: {club.missing.join(', ')}</p>}
+              </div>
             </article>
           ))}
         </div>

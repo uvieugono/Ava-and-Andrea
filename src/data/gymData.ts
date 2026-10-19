@@ -3,6 +3,7 @@ import { GYMFEST_DOCUMENT_SKILLS } from './gymfestSkillsData';
 import { GYMFEST_ADVANCED_SKILLS } from './gymfestAdvancedSkillsData';
 import { USAG_GAP_SKILLS } from './usagGapSkillsData';
 import { SKILLS_GAP_REVIEW_DATA } from './skillsReviewData';
+import { applyCurriculumUpdates } from './curriculumUpdates';
 
 export const AVATAR_PRESETS = [
   {
@@ -119,7 +120,7 @@ for (const s of ALL_CANDIDATE_SKILLS) {
   }
 }
 
-export const INITIAL_SKILLS: Skill[] = deduplicatedSkills;
+export const INITIAL_SKILLS: Skill[] = applyCurriculumUpdates(deduplicatedSkills);
 
 export const WORKOUTS: Workout[] = [
   {
@@ -158,7 +159,7 @@ export const WORKOUTS: Workout[] = [
     intensity: 'Dynamic Speed',
     xpReward: 120,
     image: 'https://images.unsplash.com/photo-1518611012118-696072aa579a?auto=format&fit=crop&w=800&q=80',
-    videoUrl: 'https://youtu.be/TSsCIEs17D8?si=k8039FiHcyglqiqH',
+    videoUrl: 'https://youtu.be/5PbrPKiLCi0?si=3wyL4IwjQNNzTdZn',
     description: 'Gymnast conditioning focused on spring floor passes, round-off acceleration, back handspring rebound snaps, and tight tumbling rotational control.',
     completedToday: false,
     highlights: [

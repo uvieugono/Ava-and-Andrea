@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useGym } from '../context/GymContext';
 import { ClubOffice } from '../components/ClubOffice';
-import { RosterGymnast, CompetitionResult, CoachNote, PracticeFocusArea, USAGLevel } from '../types';
+import { RosterGymnast, CoachNote, PracticeFocusArea } from '../types';
 import { 
   Building2, 
   Users, 
@@ -31,45 +31,42 @@ import {
   ArrowUpRight
 } from 'lucide-react';
 
+const COMPETITION_EVENTS = ['Floor', 'Vault', 'Bars', 'Beam', 'Tumbling', 'Trampoline', 'Other'];
+
 export const GymDashboardScreen: React.FC = () => {
-  const { 
-    user, 
-    rosterGymnasts, 
-    addRosterGymnast, 
-    addCompetitionResult, 
-    addCoachNote, 
-    addPracticeFocus, 
-    updatePracticeFocusStatus, 
+  const {
+    user,
+    rosterGymnasts,
+    addCompetition,
+    addCoachNote,
+    addPracticeFocus,
+    updatePracticeFocusStatus,
     reviewEvidenceSubmission,
     userRole,
-    setUserRole,
-    setCurrentTab
   } = useGym();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [levelFilter, setLevelFilter] = useState<number | 'ALL'>('ALL');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'PENDING_REVIEW' | 'NEEDING_PRACTICE'>('ALL');
-  
-  // Active Gymnast Profile Modal
-  const [activeGymnast, setActiveGymnast] = useState<RosterGymnast | null>(null);
-  const [activeGymnastTab, setActiveGymnastTab] = useState<'SCORES' | 'CHARTS' | 'SKILLS' | 'EVIDENCE' | 'PRACTICE' | 'NOTES'>('SCORES');
+
+  // Active Gymnast Profile Modal. Held by id so it always shows the latest decisions.
+  const [activeGymnastId, setActiveGymnastId] = useState<string | null>(null);
+  const activeGymnast = rosterGymnasts.find((item) => item.id === activeGymnastId) ?? null;
+  const [activeGymnastTab, setActiveGymnastTab] = useState<'COMPETITIONS' | 'EVIDENCE' | 'PRACTICE' | 'NOTES'>('EVIDENCE');
 
   // Sub-modals inside Gymnast profile
-  const [showAddScoreModal, setShowAddScoreModal] = useState(false);
+  const [showAddCompetitionModal, setShowAddCompetitionModal] = useState(false);
   const [showAddNoteModal, setShowAddNoteModal] = useState(false);
   const [showAddPracticeModal, setShowAddPracticeModal] = useState(false);
-  const [showAddGymnastModal, setShowAddGymnastModal] = useState(false);
 
-  // New Score Form
-  const [newMeetName, setNewMeetName] = useState('');
-  const [newMeetDate, setNewMeetDate] = useState('');
-  const [newMeetLevel, setNewMeetLevel] = useState<USAGLevel>(4);
-  const [vaultScore, setVaultScore] = useState<string>('9.400');
-  const [barsScore, setBarsScore] = useState<string>('9.200');
-  const [beamScore, setBeamScore] = useState<string>('9.350');
-  const [floorScore, setFloorScore] = useState<string>('9.500');
-  const [meetPlace, setMeetPlace] = useState('2nd Place All-Around 🥈');
-  const [meetNotes, setMeetNotes] = useState('Clean routine lines, solid landings.');
+  // New competition record
+  const [compName, setCompName] = useState('');
+  const [compDate, setCompDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [compEvents, setCompEvents] = useState<string[]>([]);
+  const [compResult, setCompResult] = useState('');
+  const [compComments, setCompComments] = useState('');
+  const [compError, setCompError] = useState<string | null>(null);
+  const [compBusy, setCompBusy] = useState(false);
 
   // New Note Form
   const [noteCategory, setNoteCategory] = useState<CoachNote['category']>('Form & Execution');
@@ -81,18 +78,12 @@ export const GymDashboardScreen: React.FC = () => {
   const [practiceDescription, setPracticeDescription] = useState('');
   const [practicePriority, setPracticePriority] = useState<PracticeFocusArea['priority']>('HIGH');
 
-  // New Gymnast Form
-  const [newGymnastName, setNewGymnastName] = useState('');
-  const [newGymnastLevel, setNewGymnastLevel] = useState<USAGLevel>(4);
-  const [newGymnastAge, setNewGymnastAge] = useState<number>(13);
-  const [newGymnastEvents, setNewGymnastEvents] = useState<('VAULT' | 'BARS' | 'BEAM' | 'FLOOR')[]>(['VAULT', 'FLOOR']);
+  // Skill video reviews: a comment is kept per submission
+  const [reviewDrafts, setReviewDrafts] = useState<Record<string, string>>({});
+  const [reviewBusyId, setReviewBusyId] = useState<string | null>(null);
+  const [reviewFeedback, setReviewFeedback] = useState<{ id: string; ok: boolean; message: string } | null>(null);
 
-  // Evidence Review Form
-  const [reviewingSubmissionId, setReviewingSubmissionId] = useState<string | null>(null);
-  const [coachReviewFeedback, setCoachReviewFeedback] = useState('Form approved! Clean toe point and stable landing stick. Verified by Coach.');
-
-  // Current Club Name
-  const currentClubName = user.clubName || 'Lagos Flyers Gymnastics Club';
+  const currentClubName = user.clubName || 'Your club';
 
   // Filter roster
   const filteredRoster = rosterGymnasts.filter((gymnast) => {
@@ -119,50 +110,54 @@ export const GymDashboardScreen: React.FC = () => {
     return true;
   });
 
-  // Calculate overview statistics
+  // Overview statistics
   const totalGymnasts = rosterGymnasts.length;
   const pendingSubmissionsCount = rosterGymnasts.reduce(
-    (acc, g) => acc + g.evidenceSubmissions.filter((s) => s.status === 'AWAITING_REVIEW').length, 
-    0
+    (acc, g) => acc + g.evidenceSubmissions.filter((s) => s.status === 'AWAITING_REVIEW').length,
+    0,
   );
   const activePracticeCount = rosterGymnasts.reduce(
-    (acc, g) => acc + g.practiceAreas.filter((p) => p.status === 'IN_PROGRESS').length, 
-    0
+    (acc, g) => acc + g.practiceAreas.filter((p) => p.status === 'IN_PROGRESS').length,
+    0,
   );
-  const avgAllAround = rosterGymnasts.length > 0
-    ? (rosterGymnasts.reduce((acc, g) => acc + g.personalBests.allAround.score, 0) / rosterGymnasts.length).toFixed(2)
-    : '0.00';
+  const competitionsCount = rosterGymnasts.reduce((acc, g) => acc + (g.competitions?.length ?? 0), 0);
 
-  // Handle Save New Competition Score
-  const handleSaveScore = (e: React.FormEvent) => {
+  const toggleCompEvent = (name: string) => {
+    setCompEvents((prev) => (prev.includes(name) ? prev.filter((item) => item !== name) : [...prev, name]));
+  };
+
+  // Save a competition record to the gymnast's profile
+  const handleSaveCompetition = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!activeGymnast || !newMeetName.trim()) return;
-
-    const v = parseFloat(vaultScore) || 0;
-    const b = parseFloat(barsScore) || 0;
-    const bm = parseFloat(beamScore) || 0;
-    const f = parseFloat(floorScore) || 0;
-    const aa = parseFloat((v + b + bm + f).toFixed(3));
-
-    addCompetitionResult(activeGymnast.id, {
-      meetName: newMeetName.trim(),
-      date: newMeetDate || new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-      level: newMeetLevel,
-      vaultScore: v,
-      barsScore: b,
-      beamScore: bm,
-      floorScore: f,
-      allAroundScore: aa,
-      place: meetPlace,
-      notes: meetNotes,
+    if (!activeGymnast) return;
+    if (!compName.trim()) {
+      setCompError('Enter the name of the competition or event.');
+      return;
+    }
+    if (!compDate) {
+      setCompError('Enter the date of the competition.');
+      return;
+    }
+    setCompBusy(true);
+    setCompError(null);
+    const result = await addCompetition({
+      gymnastId: activeGymnast.id,
+      name: compName.trim(),
+      date: compDate,
+      events: compEvents,
+      result: compResult.trim(),
+      comments: compComments.trim(),
     });
-
-    // Refresh active gymnast reference
-    const updated = rosterGymnasts.find((g) => g.id === activeGymnast.id);
-    if (updated) setActiveGymnast(updated);
-
-    setShowAddScoreModal(false);
-    setNewMeetName('');
+    setCompBusy(false);
+    if (!result.ok) {
+      setCompError(result.message);
+      return;
+    }
+    setShowAddCompetitionModal(false);
+    setCompName('');
+    setCompEvents([]);
+    setCompResult('');
+    setCompComments('');
   };
 
   // Handle Save Coach Note
@@ -198,113 +193,152 @@ export const GymDashboardScreen: React.FC = () => {
     setPracticeDescription('');
   };
 
-  // Handle Add Gymnast to Roster
-  const handleCreateGymnast = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newGymnastName.trim()) return;
-
-    addRosterGymnast({
-      name: newGymnastName.trim(),
-      level: newGymnastLevel,
-      age: Number(newGymnastAge) || 12,
-      clubName: currentClubName,
-      eventsFocus: newGymnastEvents,
-    });
-
-    setShowAddGymnastModal(false);
-    setNewGymnastName('');
+  // Approve or reject a skill video. A comment is required for both.
+  const handleReviewEvidence = async (submissionId: string, status: 'APPROVED' | 'NEEDS_WORK') => {
+    if (!activeGymnast) return;
+    const comment = (reviewDrafts[submissionId] ?? '').trim();
+    if (!comment) {
+      setReviewFeedback({ id: submissionId, ok: false, message: 'Add a comment explaining your decision before you approve or reject.' });
+      return;
+    }
+    setReviewBusyId(submissionId);
+    setReviewFeedback(null);
+    const result = await reviewEvidenceSubmission(activeGymnast.id, submissionId, status, comment);
+    setReviewBusyId(null);
+    setReviewFeedback({ id: submissionId, ok: result.ok, message: result.message });
+    if (result.ok) setReviewDrafts((prev) => ({ ...prev, [submissionId]: '' }));
   };
 
-  // Handle Video Evidence Approval / Critique
-  const handleReviewEvidence = (submissionId: string, status: 'APPROVED' | 'NEEDS_WORK') => {
-    if (!activeGymnast) return;
-    reviewEvidenceSubmission(activeGymnast.id, submissionId, status, coachReviewFeedback);
-    setReviewingSubmissionId(null);
+  const renderSubmission = (sub: RosterGymnast['evidenceSubmissions'][number]) => {
+    const isAwaiting = sub.status === 'AWAITING_REVIEW';
+    const isApproved = sub.status === 'APPROVED';
+    const note = reviewFeedback && reviewFeedback.id === sub.id ? reviewFeedback : null;
+    return (
+      <div
+        key={sub.id}
+        className={`p-4 rounded-2xl border space-y-3 ${isAwaiting ? 'bg-amber-50/30 border-amber-200' : 'bg-white border-[#E4D7EE]'}`}
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <h5 className="text-sm font-black text-[#241628]">{sub.skillName}</h5>
+          <span
+            className={`px-2 py-0.5 rounded-full text-[10px] font-black border ${
+              isApproved
+                ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                : isAwaiting
+                  ? 'bg-amber-50 text-amber-800 border-amber-200'
+                  : 'bg-rose-50 text-rose-800 border-rose-200'
+            }`}
+          >
+            {isApproved ? 'Approved' : isAwaiting ? 'Pending approval' : 'Rejected'}
+          </span>
+        </div>
+        <div className="flex items-center gap-2 text-xs text-[#5C4A68]">
+          <Video className="w-3.5 h-3.5 text-[#5C2A6E]" />
+          <span className="font-mono text-[11px] truncate max-w-xs">{sub.videoName}</span>
+          <span>· Submitted {sub.submittedDate}</span>
+        </div>
+        {sub.videoPreviewUrl && (
+          <video src={sub.videoPreviewUrl} controls preload="metadata" className="w-full max-h-72 rounded-xl bg-black" />
+        )}
+
+        {isAwaiting ? (
+          <div className="p-3.5 rounded-2xl bg-white border-2 border-[#5C2A6E] space-y-3">
+            <label className="text-xs font-bold text-[#241628] block" htmlFor={`review-${sub.id}`}>
+              Your comment (required). Say why, and what the gymnast can improve:
+            </label>
+            <textarea
+              id={`review-${sub.id}`}
+              rows={2}
+              value={reviewDrafts[sub.id] ?? ''}
+              onChange={(e) => setReviewDrafts((prev) => ({ ...prev, [sub.id]: e.target.value }))}
+              className="w-full px-3 py-2 rounded-xl border border-[#E4D7EE] text-xs font-medium focus:ring-2 focus:ring-[#5C2A6E] focus:outline-none"
+            />
+            {note && <p className={`text-xs ${note.ok ? 'text-emerald-800' : 'text-red-600'}`} role={note.ok ? 'status' : 'alert'}>{note.message}</p>}
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                disabled={reviewBusyId === sub.id}
+                onClick={() => handleReviewEvidence(sub.id, 'NEEDS_WORK')}
+                className="py-1.5 px-3.5 rounded-full bg-rose-50 border border-rose-200 text-rose-800 text-xs font-bold hover:bg-rose-100 disabled:opacity-60"
+              >
+                Reject
+              </button>
+              <button
+                type="button"
+                disabled={reviewBusyId === sub.id}
+                onClick={() => handleReviewEvidence(sub.id, 'APPROVED')}
+                className="py-1.5 px-4 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black shadow-xs flex items-center gap-1 disabled:opacity-60"
+              >
+                <Check className="w-3.5 h-3.5" />
+                <span>Approve</span>
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="p-2.5 rounded-xl bg-[#F4EEF8] border border-[#E4D7EE] text-xs text-[#3E1B4A] space-y-0.5">
+            <p><strong>{isApproved ? 'Approved' : 'Rejected'}{sub.reviewedBy ? ` by ${sub.reviewedBy}` : ''}:</strong> {sub.coachFeedback || 'No comment left.'}</p>
+            {note && <p className={note.ok ? 'text-emerald-800' : 'text-red-600'}>{note.message}</p>}
+          </div>
+        )}
+      </div>
+    );
   };
 
   return (
     <div className="flex flex-col w-full max-w-5xl mx-auto px-4 sm:px-6 space-y-6 pt-2 pb-16">
       <ClubOffice />
       {/* 1. CLUB & COACH DASHBOARD HEADER */}
-      <section className="bg-white rounded-3xl p-6 sm:p-7 border border-[#fce7f3] shadow-xs relative overflow-hidden space-y-5">
+      <section className="bg-white rounded-3xl p-6 sm:p-7 border border-[#E4D7EE] shadow-xs relative overflow-hidden space-y-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3.5">
-            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-[#ec4899] to-[#db2777] text-white flex items-center justify-center shadow-md shrink-0">
+            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-[#5C2A6E] to-[#3E1B4A] text-white flex items-center justify-center shadow-md shrink-0">
               <Building2 className="w-7 h-7" />
             </div>
 
             <div>
-              <h1 className="text-xl sm:text-2xl font-black text-[#1f1619] tracking-tight">
-                Club Dashboard
+              <h1 className="text-xl sm:text-2xl font-black text-[#241628] tracking-tight">
+                Club &amp; Gymnast Profile
               </h1>
-              <p className="text-sm text-[#6b555c]">{currentClubName}</p>
+              <p className="text-sm text-[#5C4A68]">{currentClubName}</p>
             </div>
           </div>
 
-          {/* Quick Header Actions: Add Gymnast & Role Switcher */}
-          <div className="flex items-center gap-2 flex-wrap">
-            <button
-              id="btn-open-add-gymnast"
-              onClick={() => setShowAddGymnastModal(true)}
-              className="py-2.5 px-4 rounded-full bg-gradient-to-r from-[#ec4899] to-[#db2777] hover:opacity-95 text-white text-xs font-black shadow-md shadow-pink-500/25 flex items-center gap-1.5 active:scale-98 transition-all"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Add Gymnast</span>
-            </button>
-
-            {/* Quick Role Perspective Switcher */}
-            <div className="flex items-center p-1 rounded-full bg-[#fff5f8] border border-[#fce7f3] text-xs font-bold">
+          {userRole === 'CLUB_ADMIN' && (
+            <div className="flex items-center gap-2 flex-wrap">
               <button
-                type="button"
-                onClick={() => {
-                  setUserRole('GYMNAST');
-                  setCurrentTab('home');
-                }}
-                className={`py-1.5 px-3 rounded-full text-[11px] transition-all ${
-                  userRole === 'GYMNAST'
-                    ? 'bg-white text-[#db2777] shadow-xs font-black'
-                    : 'text-[#6b555c] hover:text-[#1f1619]'
-                }`}
+                id="btn-open-add-gymnast"
+                onClick={() => document.getElementById('add-student-panel')?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
+                className="py-2.5 px-4 rounded-full bg-gradient-to-r from-[#5C2A6E] to-[#3E1B4A] hover:opacity-95 text-white text-xs font-black shadow-md shadow-[#5C2A6E]/25 flex items-center gap-1.5 active:scale-98 transition-all"
               >
-                🤸 Gymnast View
-              </button>
-              <button
-                type="button"
-                onClick={() => setUserRole('COACH')}
-                className={`py-1.5 px-3 rounded-full text-[11px] transition-all ${
-                  userRole !== 'GYMNAST'
-                    ? 'bg-[#ec4899] text-white shadow-xs font-black'
-                    : 'text-[#6b555c] hover:text-[#1f1619]'
-                }`}
-              >
-                📋 Coach View
+                <Plus className="w-4 h-4" />
+                <span>Add Gymnast</span>
               </button>
             </div>
-          </div>
+          )}
         </div>
 
         {/* 4 Overview Statistics Cards */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
-          <div className="p-3.5 rounded-2xl bg-[#fff9fb] border border-[#fce7f3] flex flex-col justify-between">
-            <span className="text-[10px] font-black uppercase text-[#db2777] tracking-wider">
+          <div className="p-3.5 rounded-2xl bg-[#F4EEF8] border border-[#E4D7EE] flex flex-col justify-between">
+            <span className="text-[10px] font-black uppercase text-[#3E1B4A] tracking-wider">
               Club Roster
             </span>
             <div className="flex items-baseline gap-1.5 mt-1">
-              <span className="text-2xl font-black text-[#1f1619]">{totalGymnasts}</span>
-              <span className="text-xs text-[#6b555c]">Athletes</span>
+              <span className="text-2xl font-black text-[#241628]">{totalGymnasts}</span>
+              <span className="text-xs text-[#5C4A68]">Athletes</span>
             </div>
-            <span className="text-[10px] text-[#6b555c] mt-0.5">USAG Levels 3–7</span>
+            <span className="text-[10px] text-[#5C4A68] mt-0.5">Added by you or chose your club</span>
           </div>
 
-          <div className="p-3.5 rounded-2xl bg-[#fffdf0] border border-[#fef08a] flex flex-col justify-between">
-            <span className="text-[10px] font-black uppercase text-[#854d0e] tracking-wider">
+          <div className="p-3.5 rounded-2xl bg-[#F4EEF8] border border-[#E4D7EE] flex flex-col justify-between">
+            <span className="text-[10px] font-black uppercase text-[#3E1B4A] tracking-wider">
               Evidence Reviews
             </span>
             <div className="flex items-baseline gap-1.5 mt-1">
-              <span className="text-2xl font-black text-[#854d0e]">{pendingSubmissionsCount}</span>
-              <span className="text-xs text-[#854d0e]">Pending</span>
+              <span className="text-2xl font-black text-[#3E1B4A]">{pendingSubmissionsCount}</span>
+              <span className="text-xs text-[#3E1B4A]">Pending</span>
             </div>
-            <span className="text-[10px] text-[#854d0e]">Videos to verify</span>
+            <span className="text-[10px] text-[#3E1B4A]">Videos to verify</span>
           </div>
 
           <div className="p-3.5 rounded-2xl bg-[#f0fdf4] border border-emerald-200 flex flex-col justify-between">
@@ -318,15 +352,15 @@ export const GymDashboardScreen: React.FC = () => {
             <span className="text-[10px] text-emerald-700">Areas under practice</span>
           </div>
 
-          <div className="p-3.5 rounded-2xl bg-[#fff5f8] border border-[#fce7f3] flex flex-col justify-between">
-            <span className="text-[10px] font-black uppercase text-[#db2777] tracking-wider">
-              Team All-Around Avg
+          <div className="p-3.5 rounded-2xl bg-[#F4EEF8] border border-[#E4D7EE] flex flex-col justify-between">
+            <span className="text-[10px] font-black uppercase text-[#3E1B4A] tracking-wider">
+              Competitions
             </span>
             <div className="flex items-baseline gap-1.5 mt-1">
-              <span className="text-2xl font-black text-[#db2777]">{avgAllAround}</span>
-              <span className="text-xs text-[#6b555c]">/ 40.0</span>
+              <span className="text-2xl font-black text-[#3E1B4A]">{competitionsCount}</span>
+              <span className="text-xs text-[#5C4A68]">Recorded</span>
             </div>
-            <span className="text-[10px] text-[#6b555c]">Vault, Bars, Beam, Floor</span>
+            <span className="text-[10px] text-[#5C4A68]">Across your gymnasts</span>
           </div>
         </div>
       </section>
@@ -342,7 +376,7 @@ export const GymDashboardScreen: React.FC = () => {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search gymnast by name or level..."
-              className="w-full pl-10 pr-9 py-2.5 rounded-2xl bg-white border border-[#fce7f3] text-xs font-semibold focus:ring-2 focus:ring-[#ec4899] focus:outline-none"
+              className="w-full pl-10 pr-9 py-2.5 rounded-2xl bg-white border border-[#E4D7EE] text-xs font-semibold focus:ring-2 focus:ring-[#5C2A6E] focus:outline-none"
             />
             {searchQuery && (
               <button
@@ -355,13 +389,13 @@ export const GymDashboardScreen: React.FC = () => {
           </div>
 
           {/* Quick Filter: Pending Reviews vs Needing Practice */}
-          <div className="flex p-1 bg-[#fff5f8] rounded-2xl border border-[#fce7f3] text-xs font-bold shrink-0">
+          <div className="flex p-1 bg-[#F4EEF8] rounded-2xl border border-[#E4D7EE] text-xs font-bold shrink-0">
             <button
               onClick={() => setStatusFilter('ALL')}
               className={`py-2 px-3 rounded-xl transition-all ${
                 statusFilter === 'ALL'
-                  ? 'bg-white text-[#db2777] shadow-xs font-black'
-                  : 'text-[#6b555c] hover:text-[#1f1619]'
+                  ? 'bg-white text-[#3E1B4A] shadow-xs font-black'
+                  : 'text-[#5C4A68] hover:text-[#241628]'
               }`}
             >
               All Athletes ({rosterGymnasts.length})
@@ -370,8 +404,8 @@ export const GymDashboardScreen: React.FC = () => {
               onClick={() => setStatusFilter('PENDING_REVIEW')}
               className={`py-2 px-3 rounded-xl transition-all flex items-center gap-1 ${
                 statusFilter === 'PENDING_REVIEW'
-                  ? 'bg-white text-[#db2777] shadow-xs font-black'
-                  : 'text-[#6b555c] hover:text-[#1f1619]'
+                  ? 'bg-white text-[#3E1B4A] shadow-xs font-black'
+                  : 'text-[#5C4A68] hover:text-[#241628]'
               }`}
             >
               <Clock className="w-3.5 h-3.5 text-amber-500" />
@@ -382,15 +416,15 @@ export const GymDashboardScreen: React.FC = () => {
 
         {/* Level Filter Bar */}
         <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1">
-          <span className="text-[11px] font-bold text-[#6b555c] shrink-0 mr-1">USAG Level:</span>
-          {(['ALL', 3, 4, 5, 6, 7] as const).map((lvl) => (
+          <span className="text-[11px] font-bold text-[#5C4A68] shrink-0 mr-1">USAG Level:</span>
+          {(['ALL', 1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const).map((lvl) => (
             <button
               key={lvl}
               onClick={() => setLevelFilter(lvl)}
               className={`py-1.5 px-3 rounded-xl text-xs font-bold transition-all shrink-0 ${
                 levelFilter === lvl
-                  ? 'bg-[#ec4899] text-white shadow-xs font-extrabold'
-                  : 'bg-white text-[#6b555c] border border-[#fce7f3] hover:bg-[#fff5f8]'
+                  ? 'bg-[#5C2A6E] text-white shadow-xs font-extrabold'
+                  : 'bg-white text-[#5C4A68] border border-[#E4D7EE] hover:bg-[#F4EEF8]'
               }`}
             >
               {lvl === 'ALL' ? 'All Levels' : `Level ${lvl}`}
@@ -402,24 +436,24 @@ export const GymDashboardScreen: React.FC = () => {
       {/* 3. ROSTER GYMNAST CARDS GRID */}
       <section className="space-y-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-black text-[#1f1619] tracking-tight">
+          <h2 className="text-lg font-black text-[#241628] tracking-tight">
             Gymnast Roster & Athlete Profiles ({filteredRoster.length})
           </h2>
-          <span className="text-xs text-[#6b555c]">
-            Tap any gymnast to inspect scores, charts, and video tests
+          <span className="text-xs text-[#5C4A68]">
+            Tap any gymnast to review skill videos and competitions
           </span>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {filteredRoster.map((gymnast) => {
             const pendingForGymnast = gymnast.evidenceSubmissions.filter((s) => s.status === 'AWAITING_REVIEW').length;
-            const completionPct = Math.round((gymnast.completedSkillsCount / gymnast.totalSkillsCount) * 100);
+            const completionPct = gymnast.totalSkillsCount > 0 ? Math.round((gymnast.completedSkillsCount / gymnast.totalSkillsCount) * 100) : 0;
 
             return (
               <article
                 key={gymnast.id}
                 id={`card-roster-gymnast-${gymnast.id}`}
-                className="bg-white rounded-3xl border border-[#fce7f3] shadow-xs p-5 hover:border-pink-300 transition-all flex flex-col justify-between space-y-4 hover:shadow-md group"
+                className="bg-white rounded-3xl border border-[#E4D7EE] shadow-xs p-5 hover:border-[#B58BD0] transition-all flex flex-col justify-between space-y-4 hover:shadow-md group"
               >
                 <div>
                   {/* Gymnast Profile Header */}
@@ -429,22 +463,22 @@ export const GymDashboardScreen: React.FC = () => {
                         <img
                           src={gymnast.avatar}
                           alt={gymnast.name}
-                          className="w-14 h-14 rounded-full object-cover ring-2 ring-[#ec4899]/30 border-2 border-white shadow-2xs"
+                          className="w-14 h-14 rounded-full object-cover ring-2 ring-[#5C2A6E]/30 border-2 border-white shadow-2xs"
                         />
-                        <span className="absolute -bottom-1 -right-1 px-2 py-0.2 bg-[#ec4899] text-white text-[10px] font-black rounded-full border border-white">
+                        <span className="absolute -bottom-1 -right-1 px-2 py-0.2 bg-[#5C2A6E] text-white text-[10px] font-black rounded-full border border-white">
                           L{gymnast.level}
                         </span>
                       </div>
 
                       <div>
-                        <h3 className="text-base font-black text-[#1f1619] group-hover:text-[#db2777] transition-colors">
+                        <h3 className="text-base font-black text-[#241628] group-hover:text-[#3E1B4A] transition-colors">
                           {gymnast.name}
                         </h3>
-                        <p className="text-xs text-[#6b555c]">
-                          Age {gymnast.age} • USAG Level {gymnast.level}
+                        <p className="text-xs text-[#5C4A68]">
+                          {gymnast.age > 0 ? `Age ${gymnast.age} • ` : ''}USAG Level {gymnast.level}
                         </p>
-                        <span className="text-[10px] text-[#db2777] font-semibold block mt-0.5">
-                          {gymnast.eventsFocus.join(' • ')}
+                        <span className="text-[10px] text-[#3E1B4A] font-semibold block mt-0.5">
+                          {gymnast.isMember === false ? 'Chose this club' : gymnast.eventsFocus.join(' • ')}
                         </span>
                       </div>
                     </div>
@@ -460,38 +494,30 @@ export const GymDashboardScreen: React.FC = () => {
                   {/* Skills Completion Progress */}
                   <div className="mt-3.5 space-y-1">
                     <div className="flex justify-between text-[11px] font-bold">
-                      <span className="text-[#6b555c]">Curriculum Skills</span>
-                      <span className="text-[#db2777]">{gymnast.completedSkillsCount} / {gymnast.totalSkillsCount} ({completionPct}%)</span>
+                      <span className="text-[#5C4A68]">Curriculum Skills</span>
+                      <span className="text-[#3E1B4A]">{gymnast.hasRequirements === false ? 'No standard requirements' : `${gymnast.completedSkillsCount} / ${gymnast.totalSkillsCount} (${completionPct}%)`}</span>
                     </div>
-                    <div className="w-full h-2 rounded-full bg-[#fff0f5] border border-[#fce7f3] overflow-hidden">
+                    <div className="w-full h-2 rounded-full bg-[#F4EEF8] border border-[#E4D7EE] overflow-hidden">
                       <div
-                        className="h-full rounded-full bg-gradient-to-r from-[#ec4899] to-[#f59e0b] transition-all"
+                        className="h-full rounded-full bg-gradient-to-r from-[#5C2A6E] to-[#7A4390] transition-all"
                         style={{ width: `${completionPct}%` }}
                       />
                     </div>
                   </div>
 
-                  {/* Personal Best Event Scores Quick Badges */}
-                  <div className="mt-3 p-2.5 rounded-2xl bg-[#fffdf0] border border-[#fef08a] grid grid-cols-5 gap-1 text-center text-[10px]">
+                  {/* Summary */}
+                  <div className="mt-3 p-2.5 rounded-2xl bg-[#F4EEF8] border border-[#E4D7EE] grid grid-cols-3 gap-1 text-center text-[10px]">
                     <div>
-                      <span className="text-[#854d0e] font-bold block">VT</span>
-                      <span className="font-black text-[#1f1619]">{gymnast.personalBests.vault.score.toFixed(2)}</span>
+                      <span className="text-[#3E1B4A] font-bold block">Level</span>
+                      <span className="font-black text-[#241628]">{gymnast.level}</span>
                     </div>
                     <div>
-                      <span className="text-[#854d0e] font-bold block">UB</span>
-                      <span className="font-black text-[#1f1619]">{gymnast.personalBests.bars.score.toFixed(2)}</span>
+                      <span className="text-[#3E1B4A] font-bold block">Pending</span>
+                      <span className="font-black text-[#241628]">{pendingForGymnast}</span>
                     </div>
                     <div>
-                      <span className="text-[#854d0e] font-bold block">BB</span>
-                      <span className="font-black text-[#1f1619]">{gymnast.personalBests.beam.score.toFixed(2)}</span>
-                    </div>
-                    <div>
-                      <span className="text-[#854d0e] font-bold block">FX</span>
-                      <span className="font-black text-[#1f1619]">{gymnast.personalBests.floor.score.toFixed(2)}</span>
-                    </div>
-                    <div className="border-l border-amber-200">
-                      <span className="text-[#db2777] font-black block">AA</span>
-                      <span className="font-black text-[#db2777]">{gymnast.personalBests.allAround.score.toFixed(2)}</span>
+                      <span className="text-[#3E1B4A] font-bold block">Competitions</span>
+                      <span className="font-black text-[#241628]">{gymnast.competitions?.length ?? 0}</span>
                     </div>
                   </div>
                 </div>
@@ -500,221 +526,159 @@ export const GymDashboardScreen: React.FC = () => {
                 <button
                   id={`btn-manage-gymnast-${gymnast.id}`}
                   onClick={() => {
-                    setActiveGymnast(gymnast);
-                    setActiveGymnastTab('SCORES');
+                    setActiveGymnastId(gymnast.id);
+                    setActiveGymnastTab('EVIDENCE');
                   }}
-                  className="w-full py-2.5 px-3 rounded-full bg-[#fff5f8] hover:bg-[#fce7f3] border border-[#fce7f3] text-[#db2777] text-xs font-black transition-all flex items-center justify-center gap-1.5 active:scale-98"
+                  className="w-full py-2.5 px-3 rounded-full bg-[#F4EEF8] hover:bg-[#E4D7EE] border border-[#E4D7EE] text-[#3E1B4A] text-xs font-black transition-all flex items-center justify-center gap-1.5 active:scale-98"
                 >
                   <Eye className="w-3.5 h-3.5" />
-                  <span>View Performance History</span>
+                  <span>View Profile &amp; Videos</span>
                   <ChevronRight className="w-3.5 h-3.5" />
                 </button>
               </article>
             );
           })}
         </div>
+        {filteredRoster.length === 0 && (
+          <p className="text-sm text-[#5C4A68] bg-white border border-[#E4D7EE] rounded-2xl p-5">
+            {rosterGymnasts.length === 0
+              ? 'No gymnasts yet. Add a student above, or gymnasts who choose your club in their profile will appear here.'
+              : 'No gymnasts match these filters.'}
+          </p>
+        )}
       </section>
 
       {/* 4. GYMNAST DETAILED PROFILE & PERFORMANCE MODAL */}
       {activeGymnast && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#1f1619]/70 backdrop-blur-xs p-3 sm:p-4">
-          <div className="w-full max-w-3xl bg-white rounded-3xl shadow-2xl border border-[#fce7f3] max-h-[94vh] overflow-y-auto flex flex-col justify-between animate-in fade-in zoom-in-95 duration-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#241628]/70 backdrop-blur-xs p-3 sm:p-4">
+          <div className="w-full max-w-3xl bg-white rounded-3xl shadow-2xl border border-[#E4D7EE] max-h-[94vh] overflow-y-auto flex flex-col justify-between animate-in fade-in zoom-in-95 duration-200">
             {/* Modal Header: Gymnast summary */}
-            <div className="p-5 sm:p-6 bg-gradient-to-r from-[#fff5f8] via-[#fffdf0] to-white border-b border-[#fce7f3] rounded-t-3xl">
+            <div className="p-5 sm:p-6 bg-gradient-to-r from-[#F4EEF8] via-[#F4EEF8] to-white border-b border-[#E4D7EE] rounded-t-3xl">
               <div className="flex items-start justify-between gap-4">
                 <div className="flex items-center gap-4">
                   <img
                     src={activeGymnast.avatar}
                     alt={activeGymnast.name}
-                    className="w-16 h-16 sm:w-20 sm:h-20 rounded-full object-cover ring-4 ring-[#ec4899]/30 border-2 border-white shadow-md shrink-0"
+                    className="w-16 h-16 sm:w-20 sm:h-20 rounded-full object-cover ring-4 ring-[#5C2A6E]/30 border-2 border-white shadow-md shrink-0"
                   />
                   <div>
                     <div className="flex items-center gap-2 flex-wrap">
-                      <h3 className="text-xl sm:text-2xl font-black text-[#1f1619]">
+                      <h3 className="text-xl sm:text-2xl font-black text-[#241628]">
                         {activeGymnast.name}
                       </h3>
-                      <span className="px-3 py-0.5 rounded-full bg-[#ec4899] text-white text-xs font-black">
+                      <span className="px-3 py-0.5 rounded-full bg-[#5C2A6E] text-white text-xs font-black">
                         USAG Level {activeGymnast.level}
                       </span>
                     </div>
-                    <p className="text-xs text-[#6b555c] mt-0.5">
+                    <p className="text-xs text-[#5C4A68] mt-0.5">
                       {activeGymnast.clubName} • Age {activeGymnast.age} • Events: {activeGymnast.eventsFocus.join(', ')}
                     </p>
                   </div>
                 </div>
 
                 <button
-                  onClick={() => setActiveGymnast(null)}
+                  onClick={() => setActiveGymnastId(null)}
                   className="p-2 text-gray-400 hover:text-gray-600 rounded-full hover:bg-white/80"
                 >
                   <X className="w-5 h-5" />
                 </button>
               </div>
 
-              {/* Personal Best Event Scores Banner */}
-              <div className="mt-4 p-3 rounded-2xl bg-white border border-[#fce7f3] shadow-2xs grid grid-cols-5 gap-2 text-center text-xs">
-                <div className="p-1.5 rounded-xl bg-[#fff9fb]">
-                  <span className="text-[10px] font-black text-[#6b555c] block">Vault PB</span>
-                  <span className="text-sm font-black text-[#1f1619]">{activeGymnast.personalBests.vault.score.toFixed(3)}</span>
+              {/* Summary banner */}
+              <div className="mt-4 p-3 rounded-2xl bg-white border border-[#E4D7EE] shadow-2xs grid grid-cols-4 gap-2 text-center text-xs">
+                <div className="p-1.5 rounded-xl bg-[#F4EEF8]">
+                  <span className="text-[10px] font-black text-[#5C4A68] block">Level</span>
+                  <span className="text-sm font-black text-[#241628]">{activeGymnast.level}</span>
                 </div>
-                <div className="p-1.5 rounded-xl bg-[#fff9fb]">
-                  <span className="text-[10px] font-black text-[#6b555c] block">Bars PB</span>
-                  <span className="text-sm font-black text-[#1f1619]">{activeGymnast.personalBests.bars.score.toFixed(3)}</span>
+                <div className="p-1.5 rounded-xl bg-[#F4EEF8]">
+                  <span className="text-[10px] font-black text-[#5C4A68] block">Skills approved</span>
+                  <span className="text-sm font-black text-[#241628]">
+                    {activeGymnast.hasRequirements === false ? 'n/a' : `${activeGymnast.completedSkillsCount} / ${activeGymnast.totalSkillsCount}`}
+                  </span>
                 </div>
-                <div className="p-1.5 rounded-xl bg-[#fff9fb]">
-                  <span className="text-[10px] font-black text-[#6b555c] block">Beam PB</span>
-                  <span className="text-sm font-black text-[#1f1619]">{activeGymnast.personalBests.beam.score.toFixed(3)}</span>
+                <div className="p-1.5 rounded-xl bg-[#F4EEF8] border border-[#E4D7EE]">
+                  <span className="text-[10px] font-black text-[#3E1B4A] block">Pending</span>
+                  <span className="text-sm font-black text-[#3E1B4A]">{activeGymnast.pendingCount ?? 0}</span>
                 </div>
-                <div className="p-1.5 rounded-xl bg-[#fff9fb]">
-                  <span className="text-[10px] font-black text-[#6b555c] block">Floor PB</span>
-                  <span className="text-sm font-black text-[#1f1619]">{activeGymnast.personalBests.floor.score.toFixed(3)}</span>
-                </div>
-                <div className="p-1.5 rounded-xl bg-[#fef9c3] border border-[#fef08a]">
-                  <span className="text-[10px] font-black text-[#854d0e] block">All-Around 🏆</span>
-                  <span className="text-sm font-black text-[#db2777]">{activeGymnast.personalBests.allAround.score.toFixed(3)}</span>
+                <div className="p-1.5 rounded-xl bg-[#F4EEF8]">
+                  <span className="text-[10px] font-black text-[#5C4A68] block">Telephone</span>
+                  <span className="text-xs font-black text-[#241628] break-all">{activeGymnast.phone || 'None'}</span>
                 </div>
               </div>
 
               {/* Tab Navigation inside modal */}
-              <div className="flex p-1 bg-white/80 rounded-2xl border border-[#fce7f3] mt-4 overflow-x-auto no-scrollbar gap-1 text-xs font-bold">
-                <button
-                  onClick={() => setActiveGymnastTab('SCORES')}
-                  className={`py-2 px-3 rounded-xl transition-all shrink-0 ${
-                    activeGymnastTab === 'SCORES'
-                      ? 'bg-[#ec4899] text-white shadow-xs font-black'
-                      : 'text-[#6b555c] hover:text-[#1f1619]'
-                  }`}
-                >
-                  🏅 Competition Scores ({activeGymnast.competitionHistory.length})
-                </button>
-                <button
-                  onClick={() => setActiveGymnastTab('CHARTS')}
-                  className={`py-2 px-3 rounded-xl transition-all shrink-0 ${
-                    activeGymnastTab === 'CHARTS'
-                      ? 'bg-[#ec4899] text-white shadow-xs font-black'
-                      : 'text-[#6b555c] hover:text-[#1f1619]'
-                  }`}
-                >
-                  📈 Progress Trend Charts
-                </button>
+              <div className="flex p-1 bg-white/80 rounded-2xl border border-[#E4D7EE] mt-4 overflow-x-auto no-scrollbar gap-1 text-xs font-bold">
                 <button
                   onClick={() => setActiveGymnastTab('EVIDENCE')}
                   className={`py-2 px-3 rounded-xl transition-all shrink-0 flex items-center gap-1 ${
-                    activeGymnastTab === 'EVIDENCE'
-                      ? 'bg-[#ec4899] text-white shadow-xs font-black'
-                      : 'text-[#6b555c] hover:text-[#1f1619]'
+                    activeGymnastTab === 'EVIDENCE' ? 'bg-[#5C2A6E] text-white shadow-xs font-black' : 'text-[#5C4A68] hover:text-[#241628]'
                   }`}
                 >
                   <Video className="w-3.5 h-3.5" />
                   <span>Video Reviews ({activeGymnast.evidenceSubmissions.length})</span>
                 </button>
                 <button
-                  onClick={() => setActiveGymnastTab('PRACTICE')}
+                  onClick={() => setActiveGymnastTab('COMPETITIONS')}
                   className={`py-2 px-3 rounded-xl transition-all shrink-0 ${
-                    activeGymnastTab === 'PRACTICE'
-                      ? 'bg-[#ec4899] text-white shadow-xs font-black'
-                      : 'text-[#6b555c] hover:text-[#1f1619]'
+                    activeGymnastTab === 'COMPETITIONS' ? 'bg-[#5C2A6E] text-white shadow-xs font-black' : 'text-[#5C4A68] hover:text-[#241628]'
                   }`}
                 >
-                  🎯 Areas for Practice ({activeGymnast.practiceAreas.length})
+                  Competitions ({activeGymnast.competitions?.length ?? 0})
+                </button>
+                <button
+                  onClick={() => setActiveGymnastTab('PRACTICE')}
+                  className={`py-2 px-3 rounded-xl transition-all shrink-0 ${
+                    activeGymnastTab === 'PRACTICE' ? 'bg-[#5C2A6E] text-white shadow-xs font-black' : 'text-[#5C4A68] hover:text-[#241628]'
+                  }`}
+                >
+                  Areas for Practice ({activeGymnast.practiceAreas.length})
                 </button>
                 <button
                   onClick={() => setActiveGymnastTab('NOTES')}
                   className={`py-2 px-3 rounded-xl transition-all shrink-0 ${
-                    activeGymnastTab === 'NOTES'
-                      ? 'bg-[#ec4899] text-white shadow-xs font-black'
-                      : 'text-[#6b555c] hover:text-[#1f1619]'
+                    activeGymnastTab === 'NOTES' ? 'bg-[#5C2A6E] text-white shadow-xs font-black' : 'text-[#5C4A68] hover:text-[#241628]'
                   }`}
                 >
-                  📝 Coach Notes ({activeGymnast.coachNotes.length})
+                  Coach Notes ({activeGymnast.coachNotes.length})
                 </button>
               </div>
             </div>
 
             {/* Modal Body: Active Tab Content */}
             <div className="p-5 sm:p-6 space-y-4 flex-1">
-              {/* TAB 1: COMPETITION RESULTS & SCORES */}
-              {activeGymnastTab === 'SCORES' && (
+              {/* COMPETITION RECORDS */}
+              {activeGymnastTab === 'COMPETITIONS' && (
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-3">
                     <div>
-                      <h4 className="text-base font-black text-[#1f1619]">
-                        Recorded Meets & Event Scores
-                      </h4>
-                      <p className="text-xs text-[#6b555c]">
-                        Vault, Uneven Bars, Balance Beam, Floor Exercise and All-Around tallies.
-                      </p>
+                      <h4 className="text-base font-black text-[#241628]">Competition history</h4>
+                      <p className="text-xs text-[#5C4A68]">Events {activeGymnast.name} has competed in. This also shows on their own profile.</p>
                     </div>
-
                     <button
                       id="btn-add-comp-score"
-                      onClick={() => setShowAddScoreModal(true)}
-                      className="py-2 px-3.5 rounded-full bg-[#fef9c3] hover:bg-[#fde047] border border-[#fef08a] text-[#854d0e] text-xs font-black shadow-xs flex items-center gap-1.5 transition-all"
+                      onClick={() => { setCompError(null); setShowAddCompetitionModal(true); }}
+                      className="py-2 px-3.5 rounded-full bg-[#F4EEF8] hover:bg-[#E4D7EE] border border-[#E4D7EE] text-[#3E1B4A] text-xs font-black shadow-xs flex items-center gap-1.5 transition-all shrink-0"
                     >
                       <Plus className="w-3.5 h-3.5" />
-                      <span>Record New Score</span>
+                      <span>Record competition</span>
                     </button>
                   </div>
 
-                  {activeGymnast.competitionHistory.length === 0 ? (
-                    <div className="p-6 text-center bg-[#fff9fb] rounded-2xl border border-[#fce7f3] text-xs text-[#6b555c]">
-                      No competition results logged yet. Tap "Record New Score" to log scores from recent meets!
+                  {(activeGymnast.competitions ?? []).length === 0 ? (
+                    <div className="p-6 text-center bg-[#F4EEF8] rounded-2xl border border-[#E4D7EE] text-xs text-[#5C4A68]">
+                      No competitions recorded yet. Tap "Record competition" to add one.
                     </div>
                   ) : (
                     <div className="space-y-3">
-                      {activeGymnast.competitionHistory.map((meet) => (
-                        <div
-                          key={meet.id}
-                          className="p-4 rounded-2xl bg-white border border-[#fce7f3] shadow-xs space-y-2.5"
-                        >
-                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#fce7f3] pb-2">
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <h5 className="text-sm font-black text-[#1f1619]">{meet.meetName}</h5>
-                                {meet.place && (
-                                  <span className="px-2 py-0.5 rounded-full bg-[#fef9c3] text-[#854d0e] border border-[#fef08a] text-[10px] font-bold">
-                                    {meet.place}
-                                  </span>
-                                )}
-                              </div>
-                              <span className="text-[11px] text-[#6b555c]">
-                                {meet.date} • USAG Level {meet.level}
-                              </span>
-                            </div>
-
-                            <div className="text-right">
-                              <span className="text-xs text-[#6b555c] block">All-Around Total</span>
-                              <span className="text-lg font-black text-[#db2777]">
-                                {meet.allAroundScore.toFixed(3)}
-                              </span>
-                            </div>
+                      {(activeGymnast.competitions ?? []).map((comp) => (
+                        <div key={comp.id} className="p-4 rounded-2xl bg-white border border-[#E4D7EE] shadow-xs space-y-1.5">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <h5 className="text-sm font-black text-[#241628]">{comp.name}</h5>
+                            <span className="text-[11px] text-[#5C4A68]">{comp.date}</span>
                           </div>
-
-                          {/* Event scores 4-box layout */}
-                          <div className="grid grid-cols-4 gap-2 text-center text-xs">
-                            <div className="p-2 rounded-xl bg-[#fff9fb] border border-pink-100">
-                              <span className="text-[10px] text-[#6b555c] font-bold block">Vault</span>
-                              <span className="text-xs font-black text-[#1f1619]">{meet.vaultScore.toFixed(3)}</span>
-                            </div>
-                            <div className="p-2 rounded-xl bg-[#fff9fb] border border-pink-100">
-                              <span className="text-[10px] text-[#6b555c] font-bold block">Bars</span>
-                              <span className="text-xs font-black text-[#1f1619]">{meet.barsScore.toFixed(3)}</span>
-                            </div>
-                            <div className="p-2 rounded-xl bg-[#fff9fb] border border-pink-100">
-                              <span className="text-[10px] text-[#6b555c] font-bold block">Beam</span>
-                              <span className="text-xs font-black text-[#1f1619]">{meet.beamScore.toFixed(3)}</span>
-                            </div>
-                            <div className="p-2 rounded-xl bg-[#fff9fb] border border-pink-100">
-                              <span className="text-[10px] text-[#6b555c] font-bold block">Floor</span>
-                              <span className="text-xs font-black text-[#1f1619]">{meet.floorScore.toFixed(3)}</span>
-                            </div>
-                          </div>
-
-                          {meet.notes && (
-                            <p className="text-[11px] text-[#6b555c] italic bg-[#fffdf0] p-2 rounded-xl border border-[#fef08a]">
-                              "{meet.notes}"
-                            </p>
-                          )}
+                          {comp.events.length > 0 && <p className="text-xs text-[#5C4A68]">Events: {comp.events.join(', ')}</p>}
+                          {comp.result && <p className="text-xs text-[#241628]"><strong>Result:</strong> {comp.result}</p>}
+                          {comp.comments && <p className="text-[11px] text-[#5C4A68] italic">{comp.comments}</p>}
                         </div>
                       ))}
                     </div>
@@ -722,210 +686,37 @@ export const GymDashboardScreen: React.FC = () => {
                 </div>
               )}
 
-              {/* TAB 2: PROGRESS CHARTS OVER TIME */}
-              {activeGymnastTab === 'CHARTS' && (
-                <div className="space-y-4">
+              {/* SKILL VIDEO APPROVALS */}
+              {activeGymnastTab === 'EVIDENCE' && (
+                <div className="space-y-5">
                   <div>
-                    <h4 className="text-base font-black text-[#1f1619]">
-                      Performance Progression & Score Improvement
-                    </h4>
-                    <p className="text-xs text-[#6b555c]">
-                      Visual score trajectory across competitive meets.
+                    <h4 className="text-base font-black text-[#241628]">Skill video approvals</h4>
+                    <p className="text-xs text-[#5C4A68]">
+                      Watch each video, then approve it or reject it. A comment is needed either way. When every required skill is approved the gymnast moves up a level on their own.
                     </p>
                   </div>
 
-                  {activeGymnast.competitionHistory.length === 0 ? (
-                    <div className="p-6 text-center bg-[#fff9fb] rounded-2xl border border-[#fce7f3] text-xs text-[#6b555c]">
-                      Log at least one competition to generate visual trend charts.
-                    </div>
-                  ) : (
-                    <div className="space-y-4">
-                      {/* Visual Chart Card */}
-                      <div className="p-5 rounded-2xl bg-gradient-to-br from-[#fffdf0] via-white to-[#fff5f8] border border-[#fce7f3] space-y-4">
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-bold text-[#1f1619] flex items-center gap-1.5">
-                            <TrendingUp className="w-4 h-4 text-[#db2777]" />
-                            <span>All-Around Score Trajectory</span>
-                          </span>
-                          <span className="text-xs font-extrabold text-[#db2777]">
-                            Current Peak: {activeGymnast.personalBests.allAround.score.toFixed(3)}
-                          </span>
-                        </div>
-
-                        {/* Interactive Bar Chart Representation */}
-                        <div className="h-44 flex items-end justify-around gap-2 pt-6 pb-2 border-b border-gray-200">
-                          {activeGymnast.competitionHistory.slice().reverse().map((meet, idx) => {
-                            const heightPct = Math.min(100, Math.max(30, ((meet.allAroundScore - 30) / 10) * 100));
-                            return (
-                              <div key={meet.id} className="flex-1 flex flex-col items-center gap-1 h-full justify-end">
-                                <span className="text-[10px] font-black text-[#db2777]">
-                                  {meet.allAroundScore.toFixed(2)}
-                                </span>
-                                <div
-                                  className="w-full max-w-[48px] rounded-t-xl bg-gradient-to-t from-[#ec4899] to-[#f472b6] shadow-2xs transition-all duration-500 hover:brightness-110"
-                                  style={{ height: `${heightPct}%` }}
-                                />
-                                <span className="text-[9px] text-[#6b555c] truncate max-w-[70px] text-center">
-                                  {meet.date.split(',')[0]}
-                                </span>
-                              </div>
-                            );
-                          })}
-                        </div>
-
-                        {/* Event breakdown averages */}
-                        <div className="grid grid-cols-4 gap-2 text-center text-xs">
-                          <div className="p-2.5 rounded-xl bg-white border border-[#fce7f3]">
-                            <span className="text-[10px] text-[#6b555c] block font-bold">Vault Avg</span>
-                            <span className="font-black text-[#1f1619]">
-                              {(activeGymnast.competitionHistory.reduce((s, m) => s + m.vaultScore, 0) / activeGymnast.competitionHistory.length).toFixed(2)}
-                            </span>
-                          </div>
-                          <div className="p-2.5 rounded-xl bg-white border border-[#fce7f3]">
-                            <span className="text-[10px] text-[#6b555c] block font-bold">Bars Avg</span>
-                            <span className="font-black text-[#1f1619]">
-                              {(activeGymnast.competitionHistory.reduce((s, m) => s + m.barsScore, 0) / activeGymnast.competitionHistory.length).toFixed(2)}
-                            </span>
-                          </div>
-                          <div className="p-2.5 rounded-xl bg-white border border-[#fce7f3]">
-                            <span className="text-[10px] text-[#6b555c] block font-bold">Beam Avg</span>
-                            <span className="font-black text-[#1f1619]">
-                              {(activeGymnast.competitionHistory.reduce((s, m) => s + m.beamScore, 0) / activeGymnast.competitionHistory.length).toFixed(2)}
-                            </span>
-                          </div>
-                          <div className="p-2.5 rounded-xl bg-white border border-[#fce7f3]">
-                            <span className="text-[10px] text-[#6b555c] block font-bold">Floor Avg</span>
-                            <span className="font-black text-[#1f1619]">
-                              {(activeGymnast.competitionHistory.reduce((s, m) => s + m.floorScore, 0) / activeGymnast.competitionHistory.length).toFixed(2)}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
+                  {activeGymnast.evidenceSubmissions.length === 0 && (
+                    <div className="p-6 text-center bg-[#F4EEF8] rounded-2xl border border-[#E4D7EE] text-xs text-[#5C4A68]">
+                      No skill videos have been submitted by this gymnast yet.
                     </div>
                   )}
-                </div>
-              )}
 
-              {/* TAB 3: VIDEO EVIDENCE SUBMISSIONS & COACH EVALUATION */}
-              {activeGymnastTab === 'EVIDENCE' && (
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h4 className="text-base font-black text-[#1f1619]">
-                        Skill-Test Video Evidence Submissions
-                      </h4>
-                      <p className="text-xs text-[#6b555c]">
-                        Review routines recorded by gymnast, stamp verified or assign drill corrections.
-                      </p>
-                    </div>
-                  </div>
+                  {activeGymnast.evidenceSubmissions.some((item) => item.status === 'AWAITING_REVIEW') && (
+                    <section className="space-y-3" aria-label="Pending skill approvals">
+                      <h5 className="text-sm font-black text-amber-800 flex items-center gap-1.5">
+                        <Clock className="w-4 h-4" />
+                        Pending skill approvals ({activeGymnast.evidenceSubmissions.filter((item) => item.status === 'AWAITING_REVIEW').length})
+                      </h5>
+                      {activeGymnast.evidenceSubmissions.filter((item) => item.status === 'AWAITING_REVIEW').map(renderSubmission)}
+                    </section>
+                  )}
 
-                  {activeGymnast.evidenceSubmissions.length === 0 ? (
-                    <div className="p-6 text-center bg-[#fff9fb] rounded-2xl border border-[#fce7f3] text-xs text-[#6b555c]">
-                      No video submissions uploaded by this gymnast yet.
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      {activeGymnast.evidenceSubmissions.map((sub) => {
-                        const isAwaiting = sub.status === 'AWAITING_REVIEW';
-                        const isApproved = sub.status === 'APPROVED';
-
-                        return (
-                          <div
-                            key={sub.id}
-                            className={`p-4 rounded-2xl border transition-all ${
-                              isAwaiting
-                                ? 'bg-amber-50/20 border-amber-200'
-                                : 'bg-white border-[#fce7f3]'
-                            }`}
-                          >
-                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                              <div className="space-y-1">
-                                <div className="flex items-center gap-2">
-                                  <h5 className="text-sm font-black text-[#1f1619]">
-                                    {sub.skillName}
-                                  </h5>
-                                  <span
-                                    className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
-                                      isApproved
-                                        ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                                        : 'bg-amber-50 text-amber-800 border border-amber-200'
-                                    }`}
-                                  >
-                                    {isApproved ? 'Approved' : sub.status === 'NEEDS_WORK' ? 'Changes required' : 'Awaiting approval'}
-                                  </span>
-                                </div>
-                                <div className="flex items-center gap-2 text-xs text-[#6b555c]">
-                                  <Video className="w-3.5 h-3.5 text-[#5C2A6E]" />
-                                  <span className="font-mono text-[11px] truncate max-w-xs">{sub.videoName}</span>
-                                  <span>· Submitted {sub.submittedDate}</span>
-                                </div>
-                                {sub.videoPreviewUrl && (
-                                  <video src={sub.videoPreviewUrl} controls className="mt-2 w-full max-h-56 rounded-xl bg-black" />
-                                )}
-                              </div>
-
-                              {/* Review Action Trigger */}
-                              {!isApproved && (
-                                <button
-                                  onClick={() => setReviewingSubmissionId(sub.id)}
-                                  className="py-2 px-3.5 rounded-full bg-[#5C2A6E] text-white text-xs font-bold shrink-0"
-                                >
-                                  View and review
-                                </button>
-                              )}
-                            </div>
-
-                            {/* Coach Feedback Box */}
-                            {sub.coachFeedback && (
-                              <div className="mt-2.5 p-2.5 rounded-xl bg-[#fffdf0] border border-[#fef08a] text-xs text-[#854d0e]">
-                                <strong>Coach Stamp Feedback:</strong> {sub.coachFeedback}
-                              </div>
-                            )}
-
-                            {/* Active Evaluation Drawer */}
-                            {reviewingSubmissionId === sub.id && (
-                              <div className="mt-3 p-3.5 rounded-2xl bg-white border-2 border-[#ec4899] space-y-3 animate-in fade-in">
-                                <label className="text-xs font-bold text-[#1f1619] block">
-                                  Add Coach Critique & Evaluation Notes:
-                                </label>
-                                <textarea
-                                  rows={2}
-                                  value={coachReviewFeedback}
-                                  onChange={(e) => setCoachReviewFeedback(e.target.value)}
-                                  className="w-full px-3 py-2 rounded-xl border border-[#fce7f3] text-xs font-medium focus:ring-2 focus:ring-[#ec4899] focus:outline-none"
-                                />
-
-                                <div className="flex items-center justify-end gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => setReviewingSubmissionId(null)}
-                                    className="py-1.5 px-3 rounded-full text-xs font-bold text-[#6b555c]"
-                                  >
-                                    Cancel
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleReviewEvidence(sub.id, 'NEEDS_WORK')}
-                                    className="py-1.5 px-3.5 rounded-full bg-[#fff0f5] border border-pink-200 text-[#db2777] text-xs font-bold hover:bg-[#fce7f3]"
-                                  >
-                                    Changes required
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleReviewEvidence(sub.id, 'APPROVED')}
-                                    className="py-1.5 px-4 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black shadow-xs flex items-center gap-1"
-                                  >
-                                    <Check className="w-3.5 h-3.5" />
-                                    <span>Approve</span>
-                                  </button>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
+                  {activeGymnast.evidenceSubmissions.some((item) => item.status !== 'AWAITING_REVIEW') && (
+                    <section className="space-y-3" aria-label="Reviewed skills">
+                      <h5 className="text-sm font-black text-[#241628]">Reviewed</h5>
+                      {activeGymnast.evidenceSubmissions.filter((item) => item.status !== 'AWAITING_REVIEW').map(renderSubmission)}
+                    </section>
                   )}
                 </div>
               )}
@@ -935,18 +726,18 @@ export const GymDashboardScreen: React.FC = () => {
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     <div>
-                      <h4 className="text-base font-black text-[#1f1619]">
+                      <h4 className="text-base font-black text-[#241628]">
                         Identified Practice Areas & Custom Drills
                       </h4>
-                      <p className="text-xs text-[#6b555c]">
-                        Assign apparatus drills to fix execution deductions before the next meet.
+                      <p className="text-xs text-[#5C4A68]">
+                        Assign apparatus drills to fix execution deductions before the next meet. Kept on this device.
                       </p>
                     </div>
 
                     <button
                       id="btn-assign-practice-drill"
                       onClick={() => setShowAddPracticeModal(true)}
-                      className="py-2 px-3.5 rounded-full bg-[#fef9c3] hover:bg-[#fde047] border border-[#fef08a] text-[#854d0e] text-xs font-black shadow-xs flex items-center gap-1.5 transition-all"
+                      className="py-2 px-3.5 rounded-full bg-[#F4EEF8] hover:bg-[#E4D7EE] border border-[#E4D7EE] text-[#3E1B4A] text-xs font-black shadow-xs flex items-center gap-1.5 transition-all"
                     >
                       <Plus className="w-3.5 h-3.5" />
                       <span>Assign Practice Drill</span>
@@ -954,7 +745,7 @@ export const GymDashboardScreen: React.FC = () => {
                   </div>
 
                   {activeGymnast.practiceAreas.length === 0 ? (
-                    <div className="p-6 text-center bg-[#fff9fb] rounded-2xl border border-[#fce7f3] text-xs text-[#6b555c]">
+                    <div className="p-6 text-center bg-[#F4EEF8] rounded-2xl border border-[#E4D7EE] text-xs text-[#5C4A68]">
                       No active practice drills assigned. Tap above to assign a targeted drill.
                     </div>
                   ) : (
@@ -962,14 +753,14 @@ export const GymDashboardScreen: React.FC = () => {
                       {activeGymnast.practiceAreas.map((focus) => (
                         <div
                           key={focus.id}
-                          className="p-3.5 rounded-2xl bg-white border border-[#fce7f3] shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                          className="p-3.5 rounded-2xl bg-white border border-[#E4D7EE] shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3"
                         >
                           <div className="space-y-1">
                             <div className="flex items-center gap-2">
-                              <span className="px-2 py-0.2 rounded-md bg-[#fff0f5] text-[#db2777] font-black text-[10px] uppercase">
+                              <span className="px-2 py-0.2 rounded-md bg-[#F4EEF8] text-[#3E1B4A] font-black text-[10px] uppercase">
                                 {focus.apparatus}
                               </span>
-                              <h5 className="text-xs font-black text-[#1f1619]">
+                              <h5 className="text-xs font-black text-[#241628]">
                                 {focus.title}
                               </h5>
                               <span
@@ -982,7 +773,7 @@ export const GymDashboardScreen: React.FC = () => {
                                 {focus.priority} Priority
                               </span>
                             </div>
-                            <p className="text-xs text-[#6b555c] leading-relaxed">
+                            <p className="text-xs text-[#5C4A68] leading-relaxed">
                               {focus.description}
                             </p>
                           </div>
@@ -1015,18 +806,18 @@ export const GymDashboardScreen: React.FC = () => {
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     <div>
-                      <h4 className="text-base font-black text-[#1f1619]">
+                      <h4 className="text-base font-black text-[#241628]">
                         Coach Performance Critique & Notes
                       </h4>
-                      <p className="text-xs text-[#6b555c]">
-                        Log private training notes on execution, artistry, and readiness.
+                      <p className="text-xs text-[#5C4A68]">
+                        Log private training notes on execution, artistry, and readiness. Kept on this device.
                       </p>
                     </div>
 
                     <button
                       id="btn-add-coach-note"
                       onClick={() => setShowAddNoteModal(true)}
-                      className="py-2 px-3.5 rounded-full bg-[#fef9c3] hover:bg-[#fde047] border border-[#fef08a] text-[#854d0e] text-xs font-black shadow-xs flex items-center gap-1.5 transition-all"
+                      className="py-2 px-3.5 rounded-full bg-[#F4EEF8] hover:bg-[#E4D7EE] border border-[#E4D7EE] text-[#3E1B4A] text-xs font-black shadow-xs flex items-center gap-1.5 transition-all"
                     >
                       <Plus className="w-3.5 h-3.5" />
                       <span>Add Performance Note</span>
@@ -1034,7 +825,7 @@ export const GymDashboardScreen: React.FC = () => {
                   </div>
 
                   {activeGymnast.coachNotes.length === 0 ? (
-                    <div className="p-6 text-center bg-[#fff9fb] rounded-2xl border border-[#fce7f3] text-xs text-[#6b555c]">
+                    <div className="p-6 text-center bg-[#F4EEF8] rounded-2xl border border-[#E4D7EE] text-xs text-[#5C4A68]">
                       No coach notes logged yet.
                     </div>
                   ) : (
@@ -1042,18 +833,18 @@ export const GymDashboardScreen: React.FC = () => {
                       {activeGymnast.coachNotes.map((note) => (
                         <div
                           key={note.id}
-                          className="p-3.5 rounded-2xl bg-[#fffdf0] border border-[#fef08a] space-y-1.5 shadow-2xs"
+                          className="p-3.5 rounded-2xl bg-[#F4EEF8] border border-[#E4D7EE] space-y-1.5 shadow-2xs"
                         >
                           <div className="flex items-center justify-between text-xs">
                             <div className="flex items-center gap-2">
-                              <span className="font-extrabold text-[#1f1619]">{note.coachName}</span>
-                              <span className="px-2 py-0.2 rounded-md bg-white border border-[#fef08a] text-[10px] font-bold text-[#854d0e]">
+                              <span className="font-extrabold text-[#241628]">{note.coachName}</span>
+                              <span className="px-2 py-0.2 rounded-md bg-white border border-[#E4D7EE] text-[10px] font-bold text-[#3E1B4A]">
                                 {note.category}
                               </span>
                             </div>
-                            <span className="text-[10px] text-[#6b555c]">{note.date}</span>
+                            <span className="text-[10px] text-[#5C4A68]">{note.date}</span>
                           </div>
-                          <p className="text-xs text-[#1f1619] leading-relaxed">
+                          <p className="text-xs text-[#241628] leading-relaxed">
                             "{note.text}"
                           </p>
                         </div>
@@ -1065,14 +856,14 @@ export const GymDashboardScreen: React.FC = () => {
             </div>
 
             {/* Modal Footer */}
-            <div className="p-4 border-t border-[#fce7f3] flex items-center justify-between bg-[#fff9fb] rounded-b-3xl">
-              <span className="text-xs text-[#6b555c]">
+            <div className="p-4 border-t border-[#E4D7EE] flex items-center justify-between bg-[#F4EEF8] rounded-b-3xl">
+              <span className="text-xs text-[#5C4A68]">
                 Roster Record ID: <strong className="font-mono">{activeGymnast.id}</strong>
               </span>
 
               <button
-                onClick={() => setActiveGymnast(null)}
-                className="py-2 px-5 rounded-full bg-[#1f1619] text-white text-xs font-bold hover:bg-[#33222a]"
+                onClick={() => setActiveGymnastId(null)}
+                className="py-2 px-5 rounded-full bg-[#241628] text-white text-xs font-bold hover:bg-[#3E1B4A]"
               >
                 Done
               </button>
@@ -1081,152 +872,88 @@ export const GymDashboardScreen: React.FC = () => {
         </div>
       )}
 
-      {/* 5. MODAL: RECORD NEW COMPETITION SCORE */}
-      {showAddScoreModal && activeGymnast && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center bg-[#1f1619]/65 backdrop-blur-xs p-4">
-          <div className="w-full max-w-md bg-white rounded-3xl p-6 shadow-2xl border border-[#fce7f3] space-y-4 animate-in fade-in">
-            <div className="flex items-center justify-between border-b border-[#fce7f3] pb-3">
+      {/* 5. MODAL: RECORD A COMPETITION */}
+      {showAddCompetitionModal && activeGymnast && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-[#241628]/65 backdrop-blur-xs p-4">
+          <div className="w-full max-w-md bg-white rounded-3xl p-6 shadow-2xl border border-[#E4D7EE] space-y-4 animate-in fade-in max-h-[92vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-[#E4D7EE] pb-3">
               <div>
-                <h4 className="text-base font-black text-[#1f1619]">Record Meet Result</h4>
-                <p className="text-xs text-[#6b555c]">For {activeGymnast.name} (L{activeGymnast.level})</p>
+                <h4 className="text-base font-black text-[#241628]">Record competition</h4>
+                <p className="text-xs text-[#5C4A68]">For {activeGymnast.name}</p>
               </div>
-              <button onClick={() => setShowAddScoreModal(false)} className="text-gray-400 hover:text-gray-600">
+              <button onClick={() => setShowAddCompetitionModal(false)} className="text-gray-400 hover:text-gray-600" aria-label="Close">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleSaveScore} className="space-y-3.5">
+            <form onSubmit={handleSaveCompetition} className="space-y-3.5">
               <div>
-                <label className="text-xs font-bold text-[#1f1619] block mb-1">Competition / Meet Name *</label>
+                <label className="text-xs font-bold text-[#241628] block mb-1" htmlFor="comp-name">Competition or event name *</label>
                 <input
+                  id="comp-name"
                   type="text"
-                  required
-                  value={newMeetName}
-                  onChange={(e) => setNewMeetName(e.target.value)}
-                  placeholder="e.g. Gymfest 3.0 Invitational"
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-[#fce7f3] text-xs font-semibold focus:ring-2 focus:ring-[#ec4899] focus:outline-none"
+                  value={compName}
+                  onChange={(e) => setCompName(e.target.value)}
+                  placeholder="e.g. GymFest 3.0"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-[#E4D7EE] text-xs font-semibold focus:ring-2 focus:ring-[#5C2A6E] focus:outline-none"
                 />
               </div>
-
-              <div className="grid grid-cols-2 gap-2.5">
-                <div>
-                  <label className="text-xs font-bold text-[#1f1619] block mb-1">Meet Date</label>
-                  <input
-                    type="date"
-                    value={newMeetDate}
-                    onChange={(e) => setNewMeetDate(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-[#fce7f3] text-xs font-semibold focus:ring-2 focus:ring-[#ec4899] focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-bold text-[#1f1619] block mb-1">Placement / Trophy</label>
-                  <input
-                    type="text"
-                    value={meetPlace}
-                    onChange={(e) => setMeetPlace(e.target.value)}
-                    placeholder="1st Place Gold 🥇"
-                    className="w-full px-3 py-2 rounded-xl border border-[#fce7f3] text-xs font-semibold focus:ring-2 focus:ring-[#ec4899] focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              {/* Event Scores Breakdown */}
-              <div className="p-3.5 rounded-2xl bg-[#fffdf0] border border-[#fef08a] space-y-2">
-                <span className="text-[10px] font-black uppercase text-[#854d0e] block">
-                  Event Scores (Max 10.0 per apparatus)
-                </span>
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div>
-                    <label className="text-[11px] font-bold text-[#1f1619] block">Vault Score</label>
-                    <input
-                      type="number"
-                      step="0.025"
-                      min="0"
-                      max="10"
-                      required
-                      value={vaultScore}
-                      onChange={(e) => setVaultScore(e.target.value)}
-                      className="w-full px-3 py-1.5 rounded-lg border border-[#fef08a] text-xs font-black bg-white"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[11px] font-bold text-[#1f1619] block">Uneven Bars</label>
-                    <input
-                      type="number"
-                      step="0.025"
-                      min="0"
-                      max="10"
-                      required
-                      value={barsScore}
-                      onChange={(e) => setBarsScore(e.target.value)}
-                      className="w-full px-3 py-1.5 rounded-lg border border-[#fef08a] text-xs font-black bg-white"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[11px] font-bold text-[#1f1619] block">Balance Beam</label>
-                    <input
-                      type="number"
-                      step="0.025"
-                      min="0"
-                      max="10"
-                      required
-                      value={beamScore}
-                      onChange={(e) => setBeamScore(e.target.value)}
-                      className="w-full px-3 py-1.5 rounded-lg border border-[#fef08a] text-xs font-black bg-white"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[11px] font-bold text-[#1f1619] block">Floor Exercise</label>
-                    <input
-                      type="number"
-                      step="0.025"
-                      min="0"
-                      max="10"
-                      required
-                      value={floorScore}
-                      onChange={(e) => setFloorScore(e.target.value)}
-                      className="w-full px-3 py-1.5 rounded-lg border border-[#fef08a] text-xs font-black bg-white"
-                    />
-                  </div>
-                </div>
-
-                <div className="pt-2 border-t border-amber-200/80 flex items-center justify-between text-xs">
-                  <span className="font-bold text-[#854d0e]">Computed All-Around:</span>
-                  <span className="text-sm font-black text-[#db2777]">
-                    {(
-                      (parseFloat(vaultScore) || 0) +
-                      (parseFloat(barsScore) || 0) +
-                      (parseFloat(beamScore) || 0) +
-                      (parseFloat(floorScore) || 0)
-                    ).toFixed(3)}
-                  </span>
-                </div>
-              </div>
-
               <div>
-                <label className="text-xs font-bold text-[#1f1619] block mb-1">Meet Routine Notes</label>
+                <label className="text-xs font-bold text-[#241628] block mb-1" htmlFor="comp-date">Date *</label>
                 <input
-                  type="text"
-                  value={meetNotes}
-                  onChange={(e) => setMeetNotes(e.target.value)}
-                  placeholder="e.g. Stuck vault, minor balance beam check on leap"
-                  className="w-full px-3 py-2 rounded-xl border border-[#fce7f3] text-xs font-semibold focus:ring-2 focus:ring-[#ec4899] focus:outline-none"
+                  id="comp-date"
+                  type="date"
+                  value={compDate}
+                  onChange={(e) => setCompDate(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-[#E4D7EE] text-xs font-semibold focus:ring-2 focus:ring-[#5C2A6E] focus:outline-none"
                 />
               </div>
-
-              <div className="pt-2 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setShowAddScoreModal(false)}
-                  className="py-2 px-4 rounded-full text-xs font-bold text-[#6b555c]"
-                >
-                  Cancel
-                </button>
+              <fieldset>
+                <legend className="text-xs font-bold text-[#241628] mb-1">Events or disciplines entered</legend>
+                <div className="flex flex-wrap gap-1.5">
+                  {COMPETITION_EVENTS.map((item) => (
+                    <button
+                      key={item}
+                      type="button"
+                      aria-pressed={compEvents.includes(item)}
+                      onClick={() => toggleCompEvent(item)}
+                      className={`py-1.5 px-3 rounded-full text-xs font-bold border ${compEvents.includes(item) ? 'bg-[#5C2A6E] text-white border-[#5C2A6E]' : 'bg-white text-[#5C4A68] border-[#E4D7EE]'}`}
+                    >
+                      {item}
+                    </button>
+                  ))}
+                </div>
+              </fieldset>
+              <div>
+                <label className="text-xs font-bold text-[#241628] block mb-1" htmlFor="comp-result">Result, ranking, award or score</label>
+                <textarea
+                  id="comp-result"
+                  rows={2}
+                  value={compResult}
+                  onChange={(e) => setCompResult(e.target.value)}
+                  placeholder="e.g. 2nd place all-around, silver on beam"
+                  className="w-full px-3 py-2 rounded-xl border border-[#E4D7EE] text-xs font-medium focus:ring-2 focus:ring-[#5C2A6E] focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-bold text-[#241628] block mb-1" htmlFor="comp-comments">Comments</label>
+                <textarea
+                  id="comp-comments"
+                  rows={2}
+                  value={compComments}
+                  onChange={(e) => setCompComments(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-[#E4D7EE] text-xs font-medium focus:ring-2 focus:ring-[#5C2A6E] focus:outline-none"
+                />
+              </div>
+              {compError && <p className="text-xs text-red-600" role="alert">{compError}</p>}
+              <div className="flex justify-end gap-2 pt-1">
+                <button type="button" onClick={() => setShowAddCompetitionModal(false)} className="py-2.5 px-4 rounded-full text-xs font-bold text-[#5C4A68]">Cancel</button>
                 <button
                   type="submit"
-                  className="py-2.5 px-5 rounded-full bg-[#ec4899] hover:bg-[#db2777] text-white text-xs font-black shadow-md shadow-pink-500/25"
+                  disabled={compBusy}
+                  className="py-2.5 px-5 rounded-full bg-[#5C2A6E] hover:bg-[#3E1B4A] text-white text-xs font-black shadow-md shadow-[#5C2A6E]/25 disabled:opacity-60"
                 >
-                  Save Meet Score
+                  {compBusy ? 'Saving…' : 'Save competition'}
                 </button>
               </div>
             </form>
@@ -1236,12 +963,12 @@ export const GymDashboardScreen: React.FC = () => {
 
       {/* 6. MODAL: ASSIGN PRACTICE DRILL */}
       {showAddPracticeModal && activeGymnast && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center bg-[#1f1619]/65 backdrop-blur-xs p-4">
-          <div className="w-full max-w-md bg-white rounded-3xl p-6 shadow-2xl border border-[#fce7f3] space-y-4 animate-in fade-in">
-            <div className="flex items-center justify-between border-b border-[#fce7f3] pb-3">
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-[#241628]/65 backdrop-blur-xs p-4">
+          <div className="w-full max-w-md bg-white rounded-3xl p-6 shadow-2xl border border-[#E4D7EE] space-y-4 animate-in fade-in">
+            <div className="flex items-center justify-between border-b border-[#E4D7EE] pb-3">
               <div>
-                <h4 className="text-base font-black text-[#1f1619]">Assign Practice Drill</h4>
-                <p className="text-xs text-[#6b555c]">Targeted correction for {activeGymnast.name}</p>
+                <h4 className="text-base font-black text-[#241628]">Assign Practice Drill</h4>
+                <p className="text-xs text-[#5C4A68]">Targeted correction for {activeGymnast.name}</p>
               </div>
               <button onClick={() => setShowAddPracticeModal(false)} className="text-gray-400 hover:text-gray-600">
                 <X className="w-5 h-5" />
@@ -1250,7 +977,7 @@ export const GymDashboardScreen: React.FC = () => {
 
             <form onSubmit={handleSavePractice} className="space-y-3.5">
               <div>
-                <label className="text-xs font-bold text-[#1f1619] block mb-1">Target Apparatus</label>
+                <label className="text-xs font-bold text-[#241628] block mb-1">Target Apparatus</label>
                 <div className="grid grid-cols-4 gap-2">
                   {(['VAULT', 'BARS', 'BEAM', 'FLOOR'] as const).map((app) => (
                     <button
@@ -1259,8 +986,8 @@ export const GymDashboardScreen: React.FC = () => {
                       onClick={() => setPracticeApparatus(app)}
                       className={`py-2 rounded-xl text-xs font-bold transition-all border ${
                         practiceApparatus === app
-                          ? 'bg-[#ec4899] text-white border-[#ec4899] shadow-xs'
-                          : 'bg-white text-[#6b555c] border-[#fce7f3]'
+                          ? 'bg-[#5C2A6E] text-white border-[#5C2A6E] shadow-xs'
+                          : 'bg-white text-[#5C4A68] border-[#E4D7EE]'
                       }`}
                     >
                       {app}
@@ -1270,30 +997,30 @@ export const GymDashboardScreen: React.FC = () => {
               </div>
 
               <div>
-                <label className="text-xs font-bold text-[#1f1619] block mb-1">Drill / Focus Title *</label>
+                <label className="text-xs font-bold text-[#241628] block mb-1">Drill / Focus Title *</label>
                 <input
                   type="text"
                   required
                   value={practiceTitle}
                   onChange={(e) => setPracticeTitle(e.target.value)}
                   placeholder="e.g. Uneven Bars Cast to Handstand"
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-[#fce7f3] text-xs font-semibold focus:ring-2 focus:ring-[#ec4899] focus:outline-none"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-[#E4D7EE] text-xs font-semibold focus:ring-2 focus:ring-[#5C2A6E] focus:outline-none"
                 />
               </div>
 
               <div>
-                <label className="text-xs font-bold text-[#1f1619] block mb-1">Correction Instructions & Notes</label>
+                <label className="text-xs font-bold text-[#241628] block mb-1">Correction Instructions & Notes</label>
                 <textarea
                   rows={2}
                   value={practiceDescription}
                   onChange={(e) => setPracticeDescription(e.target.value)}
                   placeholder="Keep arms locked, push toes back, freeze 2 seconds at top vertical."
-                  className="w-full px-3 py-2 rounded-xl border border-[#fce7f3] text-xs font-medium focus:ring-2 focus:ring-[#ec4899] focus:outline-none"
+                  className="w-full px-3 py-2 rounded-xl border border-[#E4D7EE] text-xs font-medium focus:ring-2 focus:ring-[#5C2A6E] focus:outline-none"
                 />
               </div>
 
               <div>
-                <label className="text-xs font-bold text-[#1f1619] block mb-1">Priority Level</label>
+                <label className="text-xs font-bold text-[#241628] block mb-1">Priority Level</label>
                 <div className="grid grid-cols-3 gap-2">
                   {(['HIGH', 'MEDIUM', 'REFINEMENT'] as const).map((pr) => (
                     <button
@@ -1302,8 +1029,8 @@ export const GymDashboardScreen: React.FC = () => {
                       onClick={() => setPracticePriority(pr)}
                       className={`py-2 rounded-xl text-xs font-bold transition-all border ${
                         practicePriority === pr
-                          ? 'bg-[#fef9c3] text-[#854d0e] border-[#fef08a] ring-2 ring-amber-200'
-                          : 'bg-white text-[#6b555c] border-[#fce7f3]'
+                          ? 'bg-[#F4EEF8] text-[#3E1B4A] border-[#E4D7EE] ring-2 ring-amber-200'
+                          : 'bg-white text-[#5C4A68] border-[#E4D7EE]'
                       }`}
                     >
                       {pr}
@@ -1316,13 +1043,13 @@ export const GymDashboardScreen: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setShowAddPracticeModal(false)}
-                  className="py-2 px-4 rounded-full text-xs font-bold text-[#6b555c]"
+                  className="py-2 px-4 rounded-full text-xs font-bold text-[#5C4A68]"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="py-2.5 px-5 rounded-full bg-[#ec4899] hover:bg-[#db2777] text-white text-xs font-black shadow-md shadow-pink-500/25"
+                  className="py-2.5 px-5 rounded-full bg-[#5C2A6E] hover:bg-[#3E1B4A] text-white text-xs font-black shadow-md shadow-[#5C2A6E]/25"
                 >
                   Assign Drill
                 </button>
@@ -1334,12 +1061,12 @@ export const GymDashboardScreen: React.FC = () => {
 
       {/* 7. MODAL: ADD COACH NOTE */}
       {showAddNoteModal && activeGymnast && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center bg-[#1f1619]/65 backdrop-blur-xs p-4">
-          <div className="w-full max-w-md bg-white rounded-3xl p-6 shadow-2xl border border-[#fce7f3] space-y-4 animate-in fade-in">
-            <div className="flex items-center justify-between border-b border-[#fce7f3] pb-3">
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-[#241628]/65 backdrop-blur-xs p-4">
+          <div className="w-full max-w-md bg-white rounded-3xl p-6 shadow-2xl border border-[#E4D7EE] space-y-4 animate-in fade-in">
+            <div className="flex items-center justify-between border-b border-[#E4D7EE] pb-3">
               <div>
-                <h4 className="text-base font-black text-[#1f1619]">Add Coach Performance Note</h4>
-                <p className="text-xs text-[#6b555c]">Feedback for {activeGymnast.name}</p>
+                <h4 className="text-base font-black text-[#241628]">Add Coach Performance Note</h4>
+                <p className="text-xs text-[#5C4A68]">Feedback for {activeGymnast.name}</p>
               </div>
               <button onClick={() => setShowAddNoteModal(false)} className="text-gray-400 hover:text-gray-600">
                 <X className="w-5 h-5" />
@@ -1348,11 +1075,11 @@ export const GymDashboardScreen: React.FC = () => {
 
             <form onSubmit={handleSaveNote} className="space-y-3.5">
               <div>
-                <label className="text-xs font-bold text-[#1f1619] block mb-1">Category</label>
+                <label className="text-xs font-bold text-[#241628] block mb-1">Category</label>
                 <select
                   value={noteCategory}
                   onChange={(e) => setNoteCategory(e.target.value as CoachNote['category'])}
-                  className="w-full px-3 py-2.5 rounded-xl border border-[#fce7f3] text-xs font-bold text-[#1f1619] focus:outline-none focus:ring-2 focus:ring-[#ec4899]"
+                  className="w-full px-3 py-2.5 rounded-xl border border-[#E4D7EE] text-xs font-bold text-[#241628] focus:outline-none focus:ring-2 focus:ring-[#5C2A6E]"
                 >
                   <option value="Form & Execution">Form & Execution</option>
                   <option value="Conditioning">Conditioning & Strength</option>
@@ -1363,14 +1090,14 @@ export const GymDashboardScreen: React.FC = () => {
               </div>
 
               <div>
-                <label className="text-xs font-bold text-[#1f1619] block mb-1">Observation / Performance Note *</label>
+                <label className="text-xs font-bold text-[#241628] block mb-1">Observation / Performance Note *</label>
                 <textarea
                   rows={3}
                   required
                   value={noteText}
                   onChange={(e) => setNoteText(e.target.value)}
                   placeholder="Record constructive coach critique, routine feedback, or milestone praise..."
-                  className="w-full px-3 py-2 rounded-xl border border-[#fce7f3] text-xs font-medium focus:ring-2 focus:ring-[#ec4899] focus:outline-none"
+                  className="w-full px-3 py-2 rounded-xl border border-[#E4D7EE] text-xs font-medium focus:ring-2 focus:ring-[#5C2A6E] focus:outline-none"
                 />
               </div>
 
@@ -1378,120 +1105,15 @@ export const GymDashboardScreen: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setShowAddNoteModal(false)}
-                  className="py-2 px-4 rounded-full text-xs font-bold text-[#6b555c]"
+                  className="py-2 px-4 rounded-full text-xs font-bold text-[#5C4A68]"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="py-2.5 px-5 rounded-full bg-[#ec4899] hover:bg-[#db2777] text-white text-xs font-black shadow-md shadow-pink-500/25"
+                  className="py-2.5 px-5 rounded-full bg-[#5C2A6E] hover:bg-[#3E1B4A] text-white text-xs font-black shadow-md shadow-[#5C2A6E]/25"
                 >
                   Save Note
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* 8. MODAL: ADD GYMNAST TO ROSTER */}
-      {showAddGymnastModal && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center bg-[#1f1619]/65 backdrop-blur-xs p-4">
-          <div className="w-full max-w-md bg-white rounded-3xl p-6 shadow-2xl border border-[#fce7f3] space-y-4 animate-in fade-in">
-            <div className="flex items-center justify-between border-b border-[#fce7f3] pb-3">
-              <div>
-                <h4 className="text-base font-black text-[#1f1619]">Add Athlete to Club Roster</h4>
-                <p className="text-xs text-[#6b555c]">Enroll a new gymnast into {currentClubName}</p>
-              </div>
-              <button onClick={() => setShowAddGymnastModal(false)} className="text-gray-400 hover:text-gray-600">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleCreateGymnast} className="space-y-3.5">
-              <div>
-                <label className="text-xs font-bold text-[#1f1619] block mb-1">Gymnast Full Name *</label>
-                <input
-                  type="text"
-                  required
-                  value={newGymnastName}
-                  onChange={(e) => setNewGymnastName(e.target.value)}
-                  placeholder="e.g. Folake Adeniyi"
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-[#fce7f3] text-xs font-semibold focus:ring-2 focus:ring-[#ec4899] focus:outline-none"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-2.5">
-                <div>
-                  <label className="text-xs font-bold text-[#1f1619] block mb-1">Age</label>
-                  <input
-                    type="number"
-                    min="4"
-                    max="25"
-                    value={newGymnastAge}
-                    onChange={(e) => setNewGymnastAge(Number(e.target.value))}
-                    className="w-full px-3 py-2 rounded-xl border border-[#fce7f3] text-xs font-semibold focus:ring-2 focus:ring-[#ec4899] focus:outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-xs font-bold text-[#1f1619] block mb-1">Starting USAG Level</label>
-                  <select
-                    value={newGymnastLevel}
-                    onChange={(e) => setNewGymnastLevel(Number(e.target.value) as USAGLevel)}
-                    className="w-full px-3 py-2 rounded-xl border border-[#fce7f3] text-xs font-bold text-[#1f1619] focus:outline-none focus:ring-2 focus:ring-[#ec4899]"
-                  >
-                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((l) => (
-                      <option key={l} value={l}>Level {l}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-[#1f1619] block mb-1">Competitive Events Focus</label>
-                <div className="grid grid-cols-4 gap-2">
-                  {(['VAULT', 'BARS', 'BEAM', 'FLOOR'] as const).map((app) => {
-                    const isSelected = newGymnastEvents.includes(app);
-                    return (
-                      <button
-                        key={app}
-                        type="button"
-                        onClick={() => {
-                          if (isSelected) {
-                            if (newGymnastEvents.length > 1) {
-                              setNewGymnastEvents(newGymnastEvents.filter((a) => a !== app));
-                            }
-                          } else {
-                            setNewGymnastEvents([...newGymnastEvents, app]);
-                          }
-                        }}
-                        className={`py-2 rounded-xl text-xs font-bold transition-all border ${
-                          isSelected
-                            ? 'bg-[#ec4899] text-white border-[#ec4899] shadow-xs'
-                            : 'bg-white text-[#6b555c] border-[#fce7f3]'
-                        }`}
-                      >
-                        {app}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="pt-2 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setShowAddGymnastModal(false)}
-                  className="py-2 px-4 rounded-full text-xs font-bold text-[#6b555c]"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="py-2.5 px-5 rounded-full bg-[#ec4899] hover:bg-[#db2777] text-white text-xs font-black shadow-md shadow-pink-500/25"
-                >
-                  Enroll Athlete
                 </button>
               </div>
             </form>

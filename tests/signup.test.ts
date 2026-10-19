@@ -25,6 +25,17 @@ async function start() {
   };
 }
 
+async function uploadVideo(base: string, token: string, scope = 'public') {
+  const response = await fetch(`${base}/api/uploads?scope=${scope}&name=clip.mp4`, {
+    method: 'POST',
+    headers: { 'content-type': 'video/mp4', authorization: `Bearer ${token}` },
+    body: Buffer.from('fake-mp4-bytes'),
+  });
+  const body = (await response.json()) as { url: string };
+  assert.equal(response.status, 201);
+  return body.url;
+}
+
 async function json(response: Response) {
   return { status: response.status, body: await response.json() };
 }
@@ -170,6 +181,7 @@ test('club signup allocates paid students and a direct signup has no club', asyn
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         name: 'Kemi',
+        phone: '08031234567',
         email: 'kemi@gym.test',
         password: 'kemi-pass-1',
         dateOfBirth: '2015-01-01',
@@ -282,7 +294,7 @@ test('inspo hides club videos and waits for a parent before a child publishes', 
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${ava.body.token}` },
       body: JSON.stringify({
-        videoUrl: 'clip.mp4',
+        videoUrl: await uploadVideo(base, ava.body.token),
         caption: 'Stuck the landing',
         skill: 'Back handspring',
         category: 'Floor',

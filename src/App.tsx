@@ -3,6 +3,7 @@ import { GymProvider, useGym } from './context/GymContext';
 import { Header } from './components/Header';
 import { XpToast } from './components/XpToast';
 import { CelebrationModal } from './components/CelebrationModal';
+import { Logo } from './components/Logo';
 import { HomeScreen } from './screens/HomeScreen';
 import { SkillsScreen } from './screens/SkillsScreen';
 import { ProgressScreen } from './screens/ProgressScreen';
@@ -11,6 +12,7 @@ import { ShopScreen } from './screens/ShopScreen';
 import { ProfileScreen } from './screens/ProfileScreen';
 import { AuthScreen } from './screens/AuthScreen';
 import { InspoScreen } from './screens/InspoScreen';
+import { ContactScreen } from './screens/ContactScreen';
 import { AddStudentsPanel } from './components/AddStudentsPanel';
 import { PaymentRequired } from './components/PaymentRequired';
 import { readAccess } from './services/gymApi';
@@ -18,32 +20,23 @@ import { ClubsScreen } from './screens/ClubsScreen';
 import { GymDashboardScreen } from './screens/GymDashboardScreen';
 
 const MainApp: React.FC = () => {
-  const { user, currentTab, userRole, logoutUser } = useGym();
-  const [guestTab, setGuestTab] = useState<'events' | 'clubs' | 'community' | null>(null);
+  const { user, ready, currentTab, userRole, isStaff, logoutUser } = useGym();
   const [paidOpen, setPaidOpen] = useState(false);
 
   useEffect(() => {
     setPaidOpen(false);
   }, [user.email, user.isLoggedIn]);
 
-  if (!user.isLoggedIn) {
-    if (!guestTab) return <AuthScreen onBrowse={setGuestTab} />;
+  if (!ready) {
     return (
-      <div className="min-h-screen bg-[#F7F4FB] text-[#241628]">
-        <div className="p-4 flex gap-4 text-sm">
-          <button type="button" onClick={() => setGuestTab(null)} className="text-[#5C2A6E]">Back to signup</button>
-          <button type="button" onClick={() => setGuestTab('events')}>Events</button>
-          <button type="button" onClick={() => setGuestTab('clubs')}>Find a Club</button>
-          <button type="button" onClick={() => setGuestTab('community')}>Connect</button>
-        </div>
-        <main className="pb-10">
-          {guestTab === 'events' && <EventsScreen />}
-          {guestTab === 'clubs' && <ClubsScreen />}
-          {guestTab === 'community' && <InspoScreen />}
-        </main>
+      <div className="min-h-screen bg-[#F7F4FB] flex flex-col items-center justify-center gap-3">
+        <Logo size="lg" />
+        <p className="text-sm text-[#5C4A68]">Loading…</p>
       </div>
     );
   }
+
+  if (!user.isLoggedIn) return <AuthScreen />;
 
   const access = readAccess();
   const needsPayment = !paidOpen && (access.status === 'locked' || access.status === 'pending_payment');
@@ -67,7 +60,8 @@ const MainApp: React.FC = () => {
             {currentTab === 'progress' && <ProgressScreen />}
             {(currentTab === 'competitions' || currentTab === 'events') && <EventsScreen />}
             {currentTab === 'clubs' && <ClubsScreen />}
-            {currentTab === 'dashboard' && (
+            {currentTab === 'contact' && <ContactScreen />}
+            {currentTab === 'dashboard' && isStaff && (
               <>
                 {userRole === 'CLUB_ADMIN' && access.status === 'trial' && clubTrialLabel && (
                   <p className="max-w-3xl mx-auto px-4 mb-3 text-sm text-[#6b555c]">Your club can use every part of GymTrack until {clubTrialLabel}. Payment starts after this free week.</p>

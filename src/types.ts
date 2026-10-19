@@ -196,6 +196,7 @@ export type NavigationTab =
   | 'clubs' 
   | 'progress' 
   | 'dashboard' 
+  | 'contact'
   | 'profile' 
   | 'community' 
   | 'shop';
@@ -216,6 +217,8 @@ export interface UserProfile {
   role?: UserRole;
   offersBars?: boolean;
   offersBeam?: boolean;
+  clubId?: string | null;
+  selectedClubId?: string | null;
 }
 
 export interface GymClub {
@@ -299,6 +302,8 @@ export interface RosterEvidenceSubmission {
   videoPreviewUrl?: string;
   status: 'AWAITING_REVIEW' | 'APPROVED' | 'NEEDS_WORK';
   coachFeedback?: string;
+  reviewedBy?: string | null;
+  reviewedAt?: string | null;
 }
 
 export interface AttendanceMark {
@@ -353,6 +358,11 @@ export interface RosterGymnast {
   coachNotes: CoachNote[];
   practiceAreas: PracticeFocusArea[];
   evidenceSubmissions: RosterEvidenceSubmission[];
+  phone?: string;
+  isMember?: boolean;
+  competitions?: { id: string; name: string; date: string; events: string[]; result: string; comments: string }[];
+  hasRequirements?: boolean;
+  pendingCount?: number;
 }
 
 export interface RegisteredClub {

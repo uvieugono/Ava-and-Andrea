@@ -3,6 +3,18 @@ import fs from 'fs';
 import path from 'path';
 import { GYM_EVENTS } from '../src/data/gymData.ts';
 import { INITIAL_REGISTERED_CLUBS } from '../src/data/gymManagementData.ts';
+import {
+  createWorkflow,
+  type AttendanceRecord,
+  type CompetitionRecord,
+  type ContactRecord,
+  type DocumentRecord,
+  type FeeReminderRecord,
+  type NoticeRecord,
+  type Notifiers,
+  type SubmissionRecord,
+  type UploadRecord,
+} from './workflow.ts';
 
 export const MONTHLY_FEE_NGN = 1000;
 export const INSPO_CATEGORIES = [
@@ -41,6 +53,11 @@ export interface UserRecord {
   showAge: boolean;
   showLevel: boolean;
   periodEnd: string | null;
+  /** The club a gymnast chose. Billing and membership only follow clubId. */
+  selectedClubId?: string | null;
+  offersBars?: boolean;
+  offersBeam?: boolean;
+  levelUpdatedAt?: string | null;
 }
 
 export interface ClubRecord {
@@ -109,6 +126,14 @@ export interface DatabaseShape {
   notifications: NotificationRecord[];
   blocks: { blockerId: string; blockedId: string }[];
   commentReports: { id: string; commentId: string; reporterId: string; createdAt: string }[];
+  submissions: SubmissionRecord[];
+  notices: NoticeRecord[];
+  competitions: CompetitionRecord[];
+  documents: DocumentRecord[];
+  attendance: AttendanceRecord[];
+  feeReminders: FeeReminderRecord[];
+  contacts: ContactRecord[];
+  uploads: UploadRecord[];
 }
 
 const CITY_COORDS: Record<string, [number, number]> = {
@@ -130,6 +155,14 @@ export function emptyDb(): DatabaseShape {
     notifications: [],
     blocks: [],
     commentReports: [],
+    submissions: [],
+    notices: [],
+    competitions: [],
+    documents: [],
+    attendance: [],
+    feeReminders: [],
+    contacts: [],
+    uploads: [],
   };
 }
 
@@ -181,22 +214,25 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const TRIAL_MS = 7 * DAY_MS;
 const MONTH_MS = 30 * DAY_MS;
 
-export function openStore(filePath: string, now: () => Date = () => new Date()) {
+export function openStore(filePath: string, now: () => Date = () => new Date(), notifiers: Notifiers = {}) {
   const db: DatabaseShape = fs.existsSync(filePath)
     ? { ...emptyDb(), ...JSON.parse(fs.readFileSync(filePath, 'utf8')) }
     : emptyDb();
   return createBoundStore(db, async (snapshot) => {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, JSON.stringify(snapshot));
-  }, now);
+  }, now, notifiers);
 }
 
-export function createBoundStore(db: DatabaseShape, persist: (snapshot: DatabaseShape) => Promise<void>, now: () => Date = () => new Date()) {
-  db.blocks = db.blocks ?? [];
-  db.commentReports = db.commentReports ?? [];
+export function createBoundStore(db: DatabaseShape, persist: (snapshot: DatabaseShape) => Promise<void>, now: () => Date = () => new Date(), notifiers: Notifiers = {}) {
+  const empty = emptyDb();
+  for (const key of Object.keys(empty) as (keyof DatabaseShape)[]) {
+    if (!Array.isArray(db[key])) (db as unknown as Record<string, unknown>)[key] = empty[key];
+  }
   async function save() {
     await persist(db);
   }
+  const workflow = createWorkflow(db, save, now, notifiers);
 
   function publicUser(user: UserRecord) {
     const club = db.clubs.find((item) => item.id === user.clubId);
@@ -206,10 +242,16 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
       email: user.email,
       name: user.name,
       username: user.username,
+      phone: user.phone,
       role: user.role,
       level: user.level,
       clubId: user.clubId,
       clubName: club?.name ?? null,
+      selectedClubId: user.clubId ? null : user.selectedClubId ?? null,
+      selectedClubName: user.clubId ? null : db.clubs.find((item) => item.id === user.selectedClubId)?.name ?? null,
+      offersBars: user.offersBars !== false,
+      offersBeam: user.offersBeam !== false,
+      progress: user.role === 'GYMNAST' ? workflow.progressFor(user) : null,
       status: user.status,
       periodEnd: accessUntil(user),
       clubTrialEndsAt: clubTrialEnd(user),
@@ -319,7 +361,7 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
   }
 
   async function createPendingStudents(
-    students: { name: string; email: string; password: string; phone?: string; level?: number; dateOfBirth?: string }[],
+    students: { name: string; email: string; password: string; phone?: string; level?: number; dateOfBirth?: string; selectedClubId?: string | null }[],
     clubId: string | null,
   ) {
     const created: UserRecord[] = [];
@@ -344,6 +386,7 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
         showAge: false,
         showLevel: false,
         periodEnd: null,
+        selectedClubId: !clubId && student.selectedClubId && db.clubs.some((item) => item.id === student.selectedClubId) ? student.selectedClubId : null,
       };
       startTrial(user);
       db.users.push(user);
@@ -416,6 +459,8 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
   }
 
   return {
+    ...workflow,
+
     async registerClub(input: { clubName: string; city: string; adminName: string; email: string; password: string; phone?: string }) {
       const email = input.email.trim().toLowerCase();
       if (db.users.some((item) => item.email === email)) throw new Error('EMAIL_TAKEN');
@@ -462,7 +507,7 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
       return { token: await issueToken(admin.id), user: publicUser(admin), club, payment: paymentView(payment) };
     },
 
-    async signupStudent(input: { name: string; email: string; password: string; phone?: string; level?: number; dateOfBirth?: string }) {
+    async signupStudent(input: { name: string; email: string; password: string; phone?: string; level?: number; dateOfBirth?: string; selectedClubId?: string | null }) {
       const created = await createPendingStudents([input], null);
       const record = db.users.find((item) => item.id === created.students[0]?.id);
       if (!record) throw new Error('ERROR');
@@ -551,8 +596,8 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
       };
     },
 
-    clubs(query: { q?: string; lat?: number; lng?: number }) {
-      const seeded = INITIAL_REGISTERED_CLUBS.map((club) => ({
+    clubs(query: { q?: string; lat?: number; lng?: number; accountsOnly?: boolean }) {
+      const seeded = query.accountsOnly ? [] : INITIAL_REGISTERED_CLUBS.map((club) => ({
         id: club.id,
         name: club.name,
         city: club.city,
@@ -602,17 +647,21 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
       if (age !== null && age < 18 && !author.parentAccepted) throw new Error('PARENT_REQUIRED');
       const category = String(input.category);
       if (!INSPO_CATEGORIES.includes(category as InspoCategory) || category === 'All') throw new Error('CATEGORY');
+      if (!input.videoUrl || typeof input.videoUrl !== 'string') throw new Error('VIDEO_REQUIRED');
+      const upload = db.uploads.find((item) => `/api/uploads/${item.id}` === input.videoUrl);
+      if (!upload || upload.ownerId !== author.id || !upload.mime.startsWith('video/')) throw new Error('VIDEO_INVALID');
+      if (!String(input.skill ?? '').trim()) throw new Error('SKILL_REQUIRED');
       const club = author.clubId ? db.clubs.find((item) => item.id === author.clubId) : null;
       const post: InspoPost = {
         id: id('post'),
         authorId: author.id,
         videoUrl: input.videoUrl,
-        caption: input.caption.trim(),
-        skill: input.skill.trim(),
+        caption: String(input.caption ?? '').trim(),
+        skill: String(input.skill).trim(),
         category: category as Exclude<InspoCategory, 'All'>,
         clubTag: input.clubTag?.trim() || club?.name || '',
         hashtags: input.hashtags ?? [],
-        visibility: input.visibility,
+        visibility: (['everyone', 'followers', 'club'] as const).includes(input.visibility) ? input.visibility : 'everyone',
         showAge: Boolean(input.showAge),
         showLevel: Boolean(input.showLevel),
         createdAt: new Date().toISOString(),

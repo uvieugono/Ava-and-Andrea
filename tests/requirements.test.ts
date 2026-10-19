@@ -70,8 +70,9 @@ test('abusive comments are held and a block hides the video', async () => {
   const authorRecord = await store.userByToken(author.token);
   const viewerRecord = await store.userByToken(viewer.token);
   assert.ok(authorRecord && viewerRecord);
+  const clip = await store.saveUpload({ ownerId: authorRecord.id, clubId: null, scope: 'public', mime: 'video/mp4', name: 'clip.mp4', size: 3, file: 'clip.mp4' });
   const post = await store.createPost(authorRecord, {
-    videoUrl: 'data:video/mp4;base64,aaa',
+    videoUrl: `/api/uploads/${clip.id}`,
     caption: 'First attempt',
     skill: 'Back handspring',
     category: 'Floor',

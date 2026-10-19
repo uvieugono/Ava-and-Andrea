@@ -2,6 +2,9 @@ import React, { useEffect, useState } from 'react';
 import { useGym } from '../context/GymContext';
 import { CURRICULUM_TIERS, matchingTutorial, skillsForLevel, tierForLevel } from '../lib/curriculum';
 import { USAGLevel } from '../types';
+import { OPTIONAL_LEVEL_NOTE, levelHasRequirements } from '../data/curriculumUpdates';
+import { SkillStatusBadge } from '../components/SkillStatusBadge';
+import { SkillSubmit } from '../components/SkillSubmit';
 
 export const SkillsScreen: React.FC = () => {
   const { user, skills, pendingSkillId, openSkill } = useGym();
@@ -40,6 +43,9 @@ export const SkillsScreen: React.FC = () => {
         <p className="text-sm text-[#5C4A68] max-w-xl">
           Choose a tier, then a level, then one skill. The page shows that skill and its demonstration.
         </p>
+        {!levelHasRequirements(level) && (
+          <p className="text-sm text-[#3E1B4A] bg-[#F4EEF8] rounded-xl px-3 py-2 max-w-xl">Level {level}: {OPTIONAL_LEVEL_NOTE}</p>
+        )}
         <div className="flex flex-wrap gap-2">
           {CURRICULUM_TIERS.map((item) => (
             <button
@@ -74,9 +80,10 @@ export const SkillsScreen: React.FC = () => {
               key={skill.id}
               type="button"
               onClick={() => setSelectedId(skill.id)}
-              className={`block w-full text-left px-3 py-2 rounded-xl text-sm ${selectedId === skill.id ? 'bg-[#F4EEF8] text-[#3E1B4A]' : 'text-[#241628]'}`}
+              className={`flex w-full items-center justify-between gap-2 text-left px-3 py-2 rounded-xl text-sm ${selectedId === skill.id ? 'bg-[#F4EEF8] text-[#3E1B4A]' : 'text-[#241628]'}`}
             >
-              {skill.name}
+              <span>{skill.name}</span>
+              <SkillStatusBadge status={skill.status} compact />
             </button>
           ))}
         </div>
@@ -85,7 +92,10 @@ export const SkillsScreen: React.FC = () => {
           {selected && (
             <div className="space-y-3">
               <h2 className="font-display text-2xl text-[#3E1B4A]">{selected.name}</h2>
-              <p className="text-sm text-[#5C4A68]">{selected.category} · Level {selected.level}</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-sm text-[#5C4A68]">{selected.category} · Level {selected.level}</p>
+                <SkillStatusBadge status={selected.status} />
+              </div>
               <p className="text-sm text-[#241628]">{selected.description}</p>
               {tutorial ? (
                 <iframe
@@ -101,6 +111,7 @@ export const SkillsScreen: React.FC = () => {
                 </p>
               )}
               {tutorial && <p className="text-sm text-[#5C4A68]">{tutorial.title}</p>}
+              <SkillSubmit skill={selected} />
             </div>
           )}
         </div>

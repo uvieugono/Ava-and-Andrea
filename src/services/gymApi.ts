@@ -58,10 +58,93 @@ export interface PaymentInstructions {
   accountNumber: string;
 }
 
+export interface Progress {
+  level: number;
+  required: number;
+  approved: number;
+  pending: number;
+  remaining: number;
+  hasRequirements: boolean;
+}
+
+export type ServerSkillStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
+
+export interface SkillState {
+  status: ServerSkillStatus;
+  comment: string;
+  submissionId: string;
+  videoUrl: string;
+  reviewedAt: string | null;
+}
+
+export interface SubmissionView {
+  id: string;
+  gymnastId: string;
+  skillId: string;
+  skillName: string;
+  level: number;
+  videoUrl: string;
+  videoName: string;
+  status: ServerSkillStatus;
+  comment: string;
+  reviewedBy: string | null;
+  createdAt: string;
+  reviewedAt: string | null;
+}
+
+export interface CompetitionView {
+  id: string;
+  gymnastId: string;
+  name: string;
+  date: string;
+  events: string[];
+  result: string;
+  comments: string;
+}
+
+export interface NoticeView {
+  id: string;
+  title: string;
+  body: string;
+  createdAt: string;
+  authorName: string;
+}
+
+export interface ClubGymnastView {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+  level: number;
+  dateOfBirth: string | null;
+  member: boolean;
+  clubName: string | null;
+  progress: Progress;
+  statuses: Record<string, SkillState>;
+  offersBars: boolean;
+  offersBeam: boolean;
+  submissions: SubmissionView[];
+  competitions: CompetitionView[];
+}
+
+export interface ClubOverview {
+  gymnasts: ClubGymnastView[];
+  notices: NoticeView[];
+  documents: { id: string; name: string; uploadId: string; uploadedAt: string }[];
+  attendance: { id: string; gymnastId: string; date: string; present: boolean }[];
+  feeReminders: { id: string; gymnastId: string; message: string; status: string; detail: string; sentAt: string }[];
+}
+
 export interface ApiUser {
   id: string;
   email: string;
   name: string;
+  phone?: string;
+  selectedClubId?: string | null;
+  selectedClubName?: string | null;
+  offersBars?: boolean;
+  offersBeam?: boolean;
+  progress?: Progress | null;
   username: string;
   role: 'CLUB_ADMIN' | 'COACH' | 'GYMNAST' | 'PARENT';
   level: number | null;
@@ -92,7 +175,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 export const gymApi = {
   registerClub: (input: { clubName: string; city: string; adminName: string; email: string; password: string; phone?: string }) =>
     request<{ token: string; user: ApiUser; payment: PaymentInstructions }>('/api/auth/register-club', { method: 'POST', body: JSON.stringify(input) }),
-  signupStudent: (input: { name: string; email: string; password: string; phone?: string; level?: number; dateOfBirth: string }) =>
+  signupStudent: (input: { name: string; email: string; password: string; phone?: string; level?: number; dateOfBirth: string; selectedClubId?: string | null }) =>
     request<{ token: string; user: ApiUser; payment: PaymentInstructions; devMatch: boolean }>('/api/auth/signup-student', { method: 'POST', body: JSON.stringify(input) }),
   login: (email: string, password: string) =>
     request<{ token: string; user: ApiUser; payment: PaymentInstructions | null }>('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
@@ -121,7 +204,94 @@ export const gymApi = {
   reportComment: (id: string) => request(`/api/comments/${id}/report`, { method: 'POST' }),
   block: (userId: string) => request('/api/blocks', { method: 'POST', body: JSON.stringify({ userId }) }),
   notifications: () => request<{ notifications: { id: string; kind: string; postId: string | null }[] }>('/api/notifications'),
+
+  updateProfile: (input: { name?: string; phone?: string; selectedClubId?: string | null; offersBars?: boolean; offersBeam?: boolean }) =>
+    request<{ user: ApiUser }>('/api/me', { method: 'PATCH', body: JSON.stringify(input) }),
+  registeredClubs: () => request<{ clubs: { id: string; name: string; city: string }[] }>('/api/clubs?accounts=1'),
+  mySkills: () =>
+    request<{ level: number | null; statuses: Record<string, SkillState>; progress: Progress | null; submissions: SubmissionView[] }>('/api/me/skills'),
+  submitSkill: (skillId: string, videoUrl: string, videoName: string) =>
+    request<{ submission: SubmissionView; statuses: Record<string, SkillState>; progress: Progress }>(`/api/skills/${skillId}/submit`, {
+      method: 'POST',
+      body: JSON.stringify({ videoUrl, videoName }),
+    }),
+  clubOverview: () => request<ClubOverview>('/api/club/overview'),
+  reviewSubmission: (id: string, decision: 'APPROVED' | 'REJECTED', comment: string) =>
+    request<{ submission: SubmissionView; advanced: boolean; level: number | null }>(`/api/club/submissions/${id}/review`, {
+      method: 'POST',
+      body: JSON.stringify({ decision, comment }),
+    }),
+  notices: () => request<{ notices: NoticeView[] }>('/api/notices'),
+  publishNotice: (title: string, body: string) =>
+    request<{ notice: NoticeView }>('/api/club/notices', { method: 'POST', body: JSON.stringify({ title, body }) }),
+  addCompetition: (input: { gymnastId: string; name: string; date: string; events: string[]; result: string; comments: string }) =>
+    request<{ competition: CompetitionView }>('/api/club/competitions', { method: 'POST', body: JSON.stringify(input) }),
+  myCompetitions: () => request<{ competitions: CompetitionView[] }>('/api/competitions'),
+  addDocument: (name: string, uploadId: string) =>
+    request<{ document: { id: string; name: string } }>('/api/club/documents', { method: 'POST', body: JSON.stringify({ name, uploadId }) }),
+  markAttendance: (gymnastId: string, date: string, present: boolean) =>
+    request('/api/club/attendance', { method: 'POST', body: JSON.stringify({ gymnastId, date, present }) }),
+  sendFeeReminder: (gymnastId: string, message: string) =>
+    request<{ reminder: { status: 'sent' | 'failed' | 'not_configured' | 'no_phone'; detail: string } }>('/api/club/fee-reminders', {
+      method: 'POST',
+      body: JSON.stringify({ gymnastId, message }),
+    }),
+  contact: (input: { name: string; phone: string; message: string }) =>
+    request<{ ok: boolean }>('/api/contact', { method: 'POST', body: JSON.stringify(input) }),
 };
+
+/** A link a <video> or <a> can use: private files need the sign-in token in the address. */
+export function mediaUrl(url: string) {
+  if (!url.startsWith('/api/uploads/')) return url;
+  const token = getToken();
+  return token ? `${url}?token=${encodeURIComponent(token)}` : url;
+}
+
+export class UploadError extends Error {
+  code: string;
+  constructor(code: string, message: string) {
+    super(message);
+    this.code = code;
+  }
+}
+
+export const MAX_VIDEO_MB = 80;
+
+const UPLOAD_MESSAGES: Record<string, string> = {
+  FILE_TOO_LARGE: `That file is too large. Videos can be up to ${MAX_VIDEO_MB} MB.`,
+  FILE_TYPE: 'That file type is not supported. Use an MP4, MOV, WebM or 3GP video.',
+  EMPTY_FILE: 'That file is empty.',
+  PAYMENT_REQUIRED: 'Your free week has ended. Payment is needed before you can upload.',
+  UNAUTHORIZED: 'You are signed out. Sign in again to upload.',
+  FORBIDDEN: 'Your account is not allowed to upload that.',
+  PARENT_REQUIRED: 'A parent must accept before this video can be published.',
+  STORAGE_FAILED: 'The file could not be saved to storage. Try again in a moment.',
+  DRIVE_QUOTA: 'The file could not be saved to storage. Please tell the GymTrack team.',
+  DRIVE_AUTH: 'Google Drive sign-in needs to be renewed before files can be saved. Please tell the GymTrack team.',
+};
+
+/** Sends a file to the server. Resolves with its stored address only once the server has saved it. */
+export async function uploadFile(file: File, options: { scope?: 'public' | 'private' } = {}): Promise<{ id: string; url: string }> {
+  if (file.size === 0) throw new UploadError('EMPTY_FILE', UPLOAD_MESSAGES.EMPTY_FILE);
+  if (file.size > MAX_VIDEO_MB * 1024 * 1024) throw new UploadError('FILE_TOO_LARGE', UPLOAD_MESSAGES.FILE_TOO_LARGE);
+  const token = getToken();
+  let response: Response;
+  try {
+    response = await fetch(`/api/uploads?scope=${options.scope ?? 'private'}&name=${encodeURIComponent(file.name)}`, {
+      method: 'POST',
+      headers: { 'content-type': file.type || 'application/octet-stream', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+      body: file,
+    });
+  } catch {
+    throw new UploadError('NETWORK', 'Could not reach GymTrack. Check your connection and try again.');
+  }
+  const body = (await response.json().catch(() => ({}))) as { id?: string; url?: string; code?: string };
+  if (!response.ok || !body.url || !body.id) {
+    const code = body.code || (response.status === 413 ? 'FILE_TOO_LARGE' : 'ERROR');
+    throw new UploadError(code, UPLOAD_MESSAGES[code] ?? 'The upload failed. Try again.');
+  }
+  return { id: body.id, url: body.url };
+}
 
 export interface InspoPost {
   id: string;

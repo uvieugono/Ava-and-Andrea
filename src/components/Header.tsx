@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useGym } from '../context/GymContext';
 import { Menu, X } from 'lucide-react';
 import { NavigationTab } from '../types';
+import { Logo } from './Logo';
 
 const NAV: { id: NavigationTab; label: string }[] = [
   { id: 'home', label: 'Home' },
@@ -11,6 +12,7 @@ const NAV: { id: NavigationTab; label: string }[] = [
   { id: 'dashboard', label: 'Club Dashboard' },
   { id: 'events', label: 'Events' },
   { id: 'clubs', label: 'Find a Club' },
+  { id: 'contact', label: 'Contact Us' },
 ];
 
 function isActive(current: NavigationTab, id: NavigationTab) {
@@ -20,7 +22,9 @@ function isActive(current: NavigationTab, id: NavigationTab) {
 }
 
 export const Header: React.FC = () => {
-  const { user, currentTab, setCurrentTab } = useGym();
+  const { user, currentTab, setCurrentTab, isStaff } = useGym();
+  // The Club Dashboard is only for signed-in club accounts.
+  const items = NAV.filter((item) => item.id !== 'dashboard' || isStaff);
   const [open, setOpen] = useState(false);
 
   const go = (tab: NavigationTab) => {
@@ -31,11 +35,11 @@ export const Header: React.FC = () => {
   return (
     <header className="fixed top-0 inset-x-0 z-40 bg-white/95 backdrop-blur border-b border-[#E4D7EE]">
       <div className="max-w-6xl mx-auto px-4 h-16 flex items-center gap-4">
-        <button type="button" onClick={() => go('home')} className="font-display text-xl text-[#3E1B4A] shrink-0">
-          GymTrack
+        <button type="button" onClick={() => go('home')} className="shrink-0" aria-label="GymTrack home">
+          <Logo />
         </button>
         <nav className="hidden lg:flex items-center gap-1 flex-1">
-          {NAV.map((item) => (
+          {items.map((item) => (
             <button
               key={item.id}
               type="button"
@@ -65,10 +69,10 @@ export const Header: React.FC = () => {
         <div className="lg:hidden fixed inset-0 z-50 bg-[#241628]/40" onClick={() => setOpen(false)}>
           <div className="bg-white h-full w-72 p-5 space-y-2" onClick={(event) => event.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
-              <span className="font-display text-xl text-[#3E1B4A]">GymTrack</span>
+              <Logo />
               <button type="button" aria-label="Close menu" onClick={() => setOpen(false)}><X /></button>
             </div>
-            {NAV.map((item) => (
+            {items.map((item) => (
               <button
                 key={item.id}
                 type="button"

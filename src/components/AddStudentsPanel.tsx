@@ -32,7 +32,7 @@ export const AddStudentsPanel: React.FC = () => {
   };
 
   return (
-    <section className="max-w-3xl mx-auto px-4 mb-4">
+    <section id="add-student-panel" className="max-w-3xl mx-auto px-4 mb-4">
       <form onSubmit={submit} className="bg-white border border-[#fce7f3] rounded-3xl p-4 space-y-2">
         <h2 className="font-black">Add a student</h2>
         <p className="text-xs text-[#6b555c]">They can sign in and use GymTrack during your club's free week. After that, each student is ₦1,000 a month.</p>

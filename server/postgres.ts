@@ -1,5 +1,6 @@
 import { Pool } from 'pg';
 import { DatabaseShape, createBoundStore, emptyDb } from './store.ts';
+import type { Notifiers } from './workflow.ts';
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS app_state (
@@ -9,7 +10,7 @@ CREATE TABLE IF NOT EXISTS app_state (
 );
 `;
 
-export async function openPostgresStore(connectionString: string, now: () => Date = () => new Date()) {
+export async function openPostgresStore(connectionString: string, now: () => Date = () => new Date(), notifiers: Notifiers = {}) {
   const pool = new Pool({ connectionString, max: 5 });
   await pool.query(SCHEMA);
   const found = await pool.query('SELECT doc FROM app_state WHERE id = 1');
@@ -22,5 +23,5 @@ export async function openPostgresStore(connectionString: string, now: () => Dat
        ON CONFLICT (id) DO UPDATE SET doc = EXCLUDED.doc, updated_at = now()`,
       [JSON.stringify(snapshot)],
     );
-  }, now);
+  }, now, notifiers);
 }

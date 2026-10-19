@@ -1,41 +1,32 @@
 import React, { useState } from 'react';
 import { useGym } from '../context/GymContext';
-import { matchingTutorial, skillIsRequired, skillsForLevel, submissionLabel } from '../lib/curriculum';
-import { Skill, USAGLevel } from '../types';
+import { matchingTutorial, requiredSkillsFor } from '../lib/curriculum';
+import { OPTIONAL_LEVEL_NOTE, levelHasRequirements } from '../data/curriculumUpdates';
+import { SkillStatusBadge } from '../components/SkillStatusBadge';
+import { SkillSubmit } from '../components/SkillSubmit';
 
 export const ProgressScreen: React.FC = () => {
-  const { user, skills, openSkill, submitSkillVideo, changeUserLevel, updateUserProfile, certificates } = useGym();
+  const { user, skills, openSkill, saveProfile, certificates } = useGym();
   const [panel, setPanel] = useState<'mastered' | 'unlock' | null>('unlock');
   const [message, setMessage] = useState<string | null>(null);
   const offersBars = user.offersBars !== false;
   const offersBeam = user.offersBeam !== false;
-  const levelSkills = skillsForLevel(skills, user.level);
-  const required = levelSkills.filter((skill) => skillIsRequired(skill, offersBars, offersBeam));
+  const required = requiredSkillsFor(skills, user.level, offersBars, offersBeam);
+  const noRequirements = !levelHasRequirements(user.level);
   const mastered = required.filter((skill) => skill.status === 'VERIFIED');
   const remaining = required.filter((skill) => skill.status !== 'VERIFIED');
-  const ready = required.length > 0 && remaining.length === 0;
   const mine = certificates.filter((item) => item.gymnastName === user.fullName);
 
-  const upload = (skill: Skill, file: File | undefined) => {
-    if (!file) return;
-    if (file.size > 6 * 1024 * 1024) {
-      setMessage('That video is over 6 MB. A smaller clip can be stored. Larger clips need the video store.');
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const url = typeof reader.result === 'string' ? reader.result : undefined;
-      submitSkillVideo(skill.id, file.name, url);
-      setMessage(`${skill.name} is awaiting approval. This stays a private assessment.`);
-    };
-    reader.readAsDataURL(file);
+  const setApparatus = async (input: { offersBars?: boolean; offersBeam?: boolean }) => {
+    const result = await saveProfile(input);
+    if (!result.ok) setMessage(result.message);
   };
 
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-6 py-6 space-y-8">
       <header>
         <h1 className="font-display text-3xl text-[#3E1B4A]">My Progress</h1>
-        <p className="text-sm text-[#5C4A68] mt-1">Level {user.level} · {mastered.length} of {required.length} required skills approved</p>
+        <p className="text-sm text-[#5C4A68] mt-1">{noRequirements ? `Level ${user.level} · ${OPTIONAL_LEVEL_NOTE}` : `Level ${user.level} · ${mastered.length} of ${required.length} required skills approved`}</p>
       </header>
 
       <section className="grid grid-cols-2 gap-3">
@@ -79,14 +70,14 @@ export const ProgressScreen: React.FC = () => {
 
       <section className="space-y-3">
         <h2 className="font-display text-2xl text-[#3E1B4A]">Skills to submit</h2>
-        <p className="text-sm text-[#5C4A68]">Upload a private video for each skill still to finish. Your club reviews it. It is not posted on Connect.</p>
+        <p className="text-sm text-[#5C4A68]">Upload a private video for each skill still to finish. Your club reviews it and moves you up a level when every required skill is approved. It is not posted on Connect.</p>
         <div className="flex flex-wrap gap-4 text-sm">
           <label className="flex items-center gap-2">
-            <input type="checkbox" checked={!offersBars} onChange={(event) => updateUserProfile({ offersBars: !event.target.checked })} />
+            <input type="checkbox" checked={!offersBars} onChange={(event) => setApparatus({ offersBars: !event.target.checked })} />
             Club has no uneven bars
           </label>
           <label className="flex items-center gap-2">
-            <input type="checkbox" checked={!offersBeam} onChange={(event) => updateUserProfile({ offersBeam: !event.target.checked })} />
+            <input type="checkbox" checked={!offersBeam} onChange={(event) => setApparatus({ offersBeam: !event.target.checked })} />
             Club has no beam
           </label>
         </div>
@@ -96,38 +87,12 @@ export const ProgressScreen: React.FC = () => {
             <article key={skill.id} className="bg-white border border-[#E4D7EE] rounded-2xl p-4 space-y-2">
               <div className="flex items-start justify-between gap-3">
                 <h3 className="text-[#241628]">{skill.name}</h3>
-                <span className="text-xs text-[#5C2A6E] shrink-0">{submissionLabel(skill.status)}</span>
+                <SkillStatusBadge status={skill.status} />
               </div>
-              {skill.verifiedNote && skill.status === 'CHANGES_REQUIRED' && (
-                <p className="text-sm text-[#5C4A68]">Club note: {skill.verifiedNote}</p>
-              )}
-              {skill.status !== 'VERIFIED' && (
-                <label className="inline-block text-sm text-white bg-[#5C2A6E] rounded-full px-4 py-2 cursor-pointer">
-                  Upload video
-                  <input
-                    type="file"
-                    accept="video/*"
-                    capture="environment"
-                    className="hidden"
-                    onChange={(event) => upload(skill, event.target.files?.[0])}
-                  />
-                </label>
-              )}
-              {skill.videoPreviewUrl?.startsWith('data:video') && (
-                <video src={skill.videoPreviewUrl} controls className="w-full rounded-xl bg-black max-h-56" />
-              )}
+              <SkillSubmit skill={skill} />
             </article>
           ))}
         </div>
-        {ready && user.level < 10 && (
-          <button
-            type="button"
-            onClick={() => changeUserLevel((user.level + 1) as USAGLevel)}
-            className="px-4 py-2 rounded-full bg-[#5C2A6E] text-white text-sm"
-          >
-            Mark level {user.level} complete and move to level {user.level + 1}
-          </button>
-        )}
       </section>
 
       {mine.length > 0 && (

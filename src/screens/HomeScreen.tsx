@@ -2,19 +2,18 @@ import React, { useState } from 'react';
 import { useGym } from '../context/GymContext';
 import { WorkoutModal } from '../components/WorkoutModal';
 import { Workout } from '../types';
-import { matchingTutorial, skillIsRequired, submissionLabel, weeklyDrills, youtubeId } from '../lib/curriculum';
+import { matchingTutorial, requiredSkillsFor, submissionLabel, weeklyDrills, youtubeId } from '../lib/curriculum';
+import { OPTIONAL_LEVEL_NOTE, levelHasRequirements } from '../data/curriculumUpdates';
+import { ContactForm } from '../components/ContactForm';
 
 export const HomeScreen: React.FC = () => {
-  const { user, skills, setCurrentTab, openSkill, notices, feeReminders, updateUserProfile } = useGym();
+  const { user, skills, setCurrentTab, notices } = useGym();
   const [activeWorkout, setActiveWorkout] = useState<Workout | null>(null);
-  const offersBars = user.offersBars !== false;
-  const offersBeam = user.offersBeam !== false;
-  const levelSkills = skills.filter((skill) => skill.level === user.level);
-  const required = levelSkills.filter((skill) => skillIsRequired(skill, offersBars, offersBeam));
+  const required = requiredSkillsFor(skills, user.level, user.offersBars !== false, user.offersBeam !== false);
+  const noRequirements = !levelHasRequirements(user.level);
   const mastered = required.filter((skill) => skill.status === 'VERIFIED');
   const learning = required.filter((skill) => skill.status !== 'VERIFIED').slice(0, 4);
   const { week, drills } = weeklyDrills();
-  const reminders = feeReminders.filter((item) => item.gymnastName === user.fullName);
 
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-6 py-6 space-y-10">
@@ -22,24 +21,16 @@ export const HomeScreen: React.FC = () => {
         <img src={user.avatar} alt="" className="w-16 h-16 rounded-full object-cover" />
         <div>
           <h1 className="font-display text-3xl text-[#3E1B4A]">{user.fullName}</h1>
-          <p className="text-[#5C4A68]">{user.clubName}</p>
+          <p className="text-[#5C4A68]">{user.clubName || 'No club selected yet'}</p>
         </div>
       </section>
-
-      {reminders.length > 0 && (
-        <section className="rounded-2xl bg-white border border-[#E4D7EE] p-4">
-          <h2 className="font-display text-xl text-[#3E1B4A]">Fee reminder</h2>
-          {reminders.slice(0, 2).map((item) => (
-            <p key={item.id} className="mt-2 text-sm text-[#241628]">{item.message}</p>
-          ))}
-        </section>
-      )}
 
       <section className="space-y-3">
         <div className="flex items-end justify-between gap-3">
           <h2 className="font-display text-2xl text-[#3E1B4A]">My Progress</h2>
           <button type="button" onClick={() => setCurrentTab('progress')} className="text-sm text-[#5C2A6E]">Open My Progress</button>
         </div>
+        {noRequirements && <p className="text-sm text-[#5C4A68]">Level {user.level}: {OPTIONAL_LEVEL_NOTE}</p>}
         <div className="grid grid-cols-2 gap-3">
           <button type="button" onClick={() => setCurrentTab('progress')} className="text-left bg-white border border-[#E4D7EE] rounded-2xl p-4">
             <p className="text-sm text-[#5C4A68]">Mastered this level</p>
@@ -52,27 +43,32 @@ export const HomeScreen: React.FC = () => {
         </div>
       </section>
 
-      <section className="space-y-3">
+      <section
+        role="link"
+        tabIndex={0}
+        aria-label="Continue Learning. Open My Progress"
+        onClick={() => setCurrentTab('progress')}
+        onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setCurrentTab('progress'); } }}
+        className="space-y-3 cursor-pointer rounded-2xl focus:outline-none focus:ring-2 focus:ring-[#5C2A6E]"
+      >
         <h2 className="font-display text-2xl text-[#3E1B4A]">Continue Learning</h2>
         {learning.length === 0 ? (
-          <p className="text-sm text-[#5C4A68]">Every required skill at this level is approved.</p>
+          <p className="text-sm text-[#5C4A68]">{noRequirements ? OPTIONAL_LEVEL_NOTE : 'Every required skill at this level is approved.'}</p>
         ) : (
           <div className="space-y-2">
             {learning.map((skill) => {
               const tutorial = matchingTutorial(skill);
               return (
-                <button
+                <div
                   key={skill.id}
-                  type="button"
-                  onClick={() => openSkill(skill.id)}
                   className="w-full text-left bg-white border border-[#E4D7EE] rounded-2xl p-4 flex items-center justify-between gap-3"
                 >
                   <span>
                     <span className="block text-[#241628]">{skill.name}</span>
                     <span className="text-sm text-[#5C4A68]">{tutorial ? 'Watch the demonstration' : 'Demonstration unavailable'} · {submissionLabel(skill.status)}</span>
                   </span>
-                  <span className="text-sm text-[#5C2A6E] shrink-0">Open</span>
-                </button>
+                  <span className="text-sm text-[#5C2A6E] shrink-0">My Progress</span>
+                </div>
               );
             })}
           </div>
@@ -127,30 +123,12 @@ export const HomeScreen: React.FC = () => {
         </section>
       )}
 
-      <section className="bg-[#F4EEF8] rounded-2xl p-5 flex items-center justify-between gap-4">
+      <section className="space-y-3" id="contact-us">
         <div>
-          <h2 className="font-display text-2xl text-[#3E1B4A]">Coach and Club Hub</h2>
-          <p className="text-sm text-[#5C4A68] mt-1">Reviews, attendance, fees, notices and documents.</p>
-          <label className="mt-3 flex items-center gap-2 text-sm text-[#241628]">
-            <input
-              type="checkbox"
-              checked={!offersBars}
-              onChange={(event) => updateUserProfile({ offersBars: !event.target.checked })}
-            />
-            My club does not offer uneven bars
-          </label>
-          <label className="mt-1 flex items-center gap-2 text-sm text-[#241628]">
-            <input
-              type="checkbox"
-              checked={!offersBeam}
-              onChange={(event) => updateUserProfile({ offersBeam: !event.target.checked })}
-            />
-            My club does not offer beam
-          </label>
+          <h2 className="font-display text-2xl text-[#3E1B4A]">Contact Us</h2>
+          <p className="text-sm text-[#5C4A68]">Send us a message and we will reply.</p>
         </div>
-        <button type="button" onClick={() => setCurrentTab('dashboard')} className="px-4 py-2 rounded-full bg-[#5C2A6E] text-white text-sm shrink-0">
-          Club Dashboard
-        </button>
+        <ContactForm />
       </section>
 
       {activeWorkout && <WorkoutModal workout={activeWorkout} onClose={() => setActiveWorkout(null)} />}

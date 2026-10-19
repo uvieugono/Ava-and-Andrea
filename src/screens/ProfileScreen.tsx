@@ -1,8 +1,8 @@
-import React, { useState, useRef } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useGym } from '../context/GymContext';
 import { USAGLevel } from '../types';
-import { AVATAR_PRESETS, AVAILABLE_GYMNASTICS_CLUBS } from '../data/gymData';
-import { ClubSelectDropdown } from '../components/ClubSelectDropdown';
+import { AVATAR_PRESETS } from '../data/gymData';
+import { gymApi } from '../services/gymApi';
 import { 
   Camera, 
   Edit3, 
@@ -22,18 +22,25 @@ import {
 } from 'lucide-react';
 
 export const ProfileScreen: React.FC = () => {
-  const { user, updateUserProfile, changeUserLevel, logoutUser, setCurrentTab, awardXp, userRole, setUserRole } = useGym();
+  const { user, updateUserProfile, saveProfile, logoutUser, setCurrentTab, awardXp, userRole, isStaff, notices, competitions, progress } = useGym();
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(user.fullName);
-  const [editClub, setEditClub] = useState(user.clubName);
-  const [customClub, setCustomClub] = useState('');
+  const [editClubId, setEditClubId] = useState(user.selectedClubId ?? '');
+  const [clubs, setClubs] = useState<{ id: string; name: string; city: string }[]>([]);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const [editPhone, setEditPhone] = useState(user.phoneNumber);
   const [editEmail, setEditEmail] = useState(user.email);
   const [selectedAvatar, setSelectedAvatar] = useState(user.avatar);
-  const [editLevel, setEditLevel] = useState<USAGLevel>(user.level);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const clubLocked = Boolean(user.clubId);
+  const isGymnast = userRole === 'GYMNAST';
+
+  useEffect(() => {
+    gymApi.registeredClubs().then((result) => setClubs(result.clubs)).catch(() => setClubs([]));
+  }, []);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -56,39 +63,35 @@ export const ProfileScreen: React.FC = () => {
 
   const handleStartEdit = () => {
     setEditName(user.fullName);
-    const matched = AVAILABLE_GYMNASTICS_CLUBS.find(
-      (c) => c.name.toLowerCase() === user.clubName.toLowerCase()
-    );
-    if (matched) {
-      setEditClub(matched.name);
-      setCustomClub('');
-    } else {
-      setEditClub('OTHER');
-      setCustomClub(user.clubName);
-    }
+    setEditClubId(user.selectedClubId ?? '');
     setEditPhone(user.phoneNumber);
     setEditEmail(user.email);
     setSelectedAvatar(user.avatar);
-    setEditLevel(user.level);
+    setFormError(null);
     setIsEditing(true);
   };
 
-  const handleSaveProfile = (e: React.FormEvent) => {
+  const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    const finalClub = editClub === 'OTHER' ? customClub.trim() : editClub.trim();
-    updateUserProfile({
-      fullName: editName.trim() || user.fullName,
-      clubName: finalClub || user.clubName,
-      phoneNumber: editPhone.trim() || user.phoneNumber,
-      email: editEmail.trim() || user.email,
-      avatar: selectedAvatar,
-      level: editLevel,
-    });
-    if (editLevel !== user.level) {
-      changeUserLevel(editLevel);
+    setFormError(null);
+    if (!editPhone.trim()) {
+      setFormError('Enter your telephone number.');
+      return;
     }
+    setSaving(true);
+    const result = await saveProfile({
+      name: editName.trim() || user.fullName,
+      phone: editPhone.trim(),
+      ...(isGymnast && !clubLocked ? { selectedClubId: editClubId || null } : {}),
+    });
+    setSaving(false);
+    if (!result.ok) {
+      setFormError(result.message);
+      return;
+    }
+    updateUserProfile({ avatar: selectedAvatar });
     setIsEditing(false);
-    awardXp(25, 'Profile updated successfully! ✨');
+    awardXp(25, 'Profile updated successfully!');
     showToast('Profile successfully saved!');
   };
 
@@ -120,7 +123,7 @@ export const ProfileScreen: React.FC = () => {
           {/* USAG Level Badge */}
           <span className="absolute bottom-1 right-1 bg-gradient-to-r from-[#ec4899] to-[#db2777] text-white text-xs font-black px-3 py-1 rounded-full shadow-md border-2 border-white flex items-center gap-1">
             <Award className="w-3.5 h-3.5 fill-current" />
-            <span>Lvl {isEditing ? editLevel : user.level}</span>
+            <span>Lvl {user.level}</span>
           </span>
 
           {/* Quick Edit Photo Trigger Button */}
@@ -144,10 +147,10 @@ export const ProfileScreen: React.FC = () => {
 
         <div className="flex items-center gap-1.5 text-xs text-[#db2777] font-bold mt-1">
           <MapPin className="w-3.5 h-3.5 shrink-0" />
-          <span>{user.clubName}</span>
+          <span>{user.clubName || 'No club selected'}</span>
           <span className="text-[#6b555c]">•</span>
           <span className="bg-[#fef9c3] text-[#854d0e] px-2 py-0.5 rounded-full border border-[#fef08a]">
-            USAG Level {user.level} Gymnast
+            {isGymnast ? `USAG Level ${user.level} Gymnast` : userRole === 'COACH' ? 'Coach' : 'Club administrator'}
           </span>
         </div>
 
@@ -156,12 +159,10 @@ export const ProfileScreen: React.FC = () => {
             <Mail className="w-3.5 h-3.5 text-[#ec4899]" />
             <span>{user.email}</span>
           </span>
-          {user.phoneNumber && (
-            <span className="flex items-center gap-1">
-              <Phone className="w-3.5 h-3.5 text-[#ec4899]" />
-              <span>{user.phoneNumber}</span>
-            </span>
-          )}
+          <span className="flex items-center gap-1">
+            <Phone className="w-3.5 h-3.5 text-[#ec4899]" />
+            <span>{user.phoneNumber || 'No telephone number on file'}</span>
+          </span>
         </div>
 
         {/* PRIMARY ACTIONS: Prominent EDIT PROFILE and VIEW PROGRESS */}
@@ -200,14 +201,18 @@ export const ProfileScreen: React.FC = () => {
 
         {/* Quick Links: Club Dashboard & Registered Clubs */}
         <div className="flex items-center gap-2 mt-3 pt-3 border-t border-[#fce7f3] w-full max-w-md justify-center">
-          <button
-            id="btn-profile-gym-dashboard"
-            onClick={() => setCurrentTab('dashboard')}
-            className="text-xs font-bold text-[#db2777] hover:underline flex items-center gap-1"
-          >
-            <span>Club Dashboard</span>
-          </button>
-          <span className="text-gray-300">•</span>
+          {isStaff && (
+            <>
+              <button
+                id="btn-profile-gym-dashboard"
+                onClick={() => setCurrentTab('dashboard')}
+                className="text-xs font-bold text-[#db2777] hover:underline flex items-center gap-1"
+              >
+                <span>Club Dashboard</span>
+              </button>
+              <span className="text-gray-300">•</span>
+            </>
+          )}
           <button
             id="btn-profile-clubs"
             onClick={() => setCurrentTab('clubs')}
@@ -298,35 +303,18 @@ export const ProfileScreen: React.FC = () => {
             </div>
           </div>
 
-          {/* 2. LEVEL SELECTOR (USAG 1 - 10) */}
-          <div className="space-y-2 p-3.5 rounded-2xl bg-[#fffdf0] border border-[#fef08a]">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-bold text-[#1f1619] flex items-center gap-1">
-                <Award className="w-4 h-4 text-[#db2777]" />
-                <span>Active USAG Level:</span>
-              </label>
-              <span className="text-xs font-black text-[#db2777]">
-                Selected: Level {editLevel}
-              </span>
+          {/* 2. LEVEL (read only: it moves up when the club approves every required skill) */}
+          {isGymnast && (
+            <div className="space-y-1 p-3.5 rounded-2xl bg-[#fffdf0] border border-[#fef08a]">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-[#1f1619] flex items-center gap-1">
+                  <Award className="w-4 h-4 text-[#db2777]" />
+                  Current level: {user.level}
+                </span>
+              </div>
+              <p className="text-[11px] text-[#6b555c]">Your level moves up by itself once your club has approved every required skill.</p>
             </div>
-            <div className="flex flex-wrap gap-1.5">
-              {([1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as USAGLevel[]).map((lvl) => (
-                <button
-                  key={lvl}
-                  type="button"
-                  id={`btn-profile-edit-level-${lvl}`}
-                  onClick={() => setEditLevel(lvl)}
-                  className={`w-9 h-9 rounded-full text-xs font-extrabold transition-all flex items-center justify-center ${
-                    editLevel === lvl
-                      ? 'bg-[#ec4899] text-white shadow-md scale-105'
-                      : 'bg-white text-[#854d0e] border border-[#fef08a] hover:bg-[#fef9c3]'
-                  }`}
-                >
-                  {lvl}
-                </button>
-              ))}
-            </div>
-          </div>
+          )}
 
           {/* 3. ATHLETE TEXT DETAILS */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
@@ -348,15 +336,27 @@ export const ProfileScreen: React.FC = () => {
               </div>
             </div>
 
-            <div className="sm:col-span-2">
-              <ClubSelectDropdown
-                selectedClub={editClub}
-                customClubName={customClub}
-                onSelectClub={(c) => setEditClub(c)}
-                onChangeCustomClub={(name) => setCustomClub(name)}
-                required
-              />
-            </div>
+            {isGymnast && (
+              <div className="sm:col-span-2">
+                <label className="text-xs font-bold text-[#1f1619] block mb-1" htmlFor="select-edit-club">Your club</label>
+                {clubLocked ? (
+                  <p className="text-xs text-[#6b555c] rounded-xl border border-[#fce7f3] px-3 py-2.5">{user.clubName}. Your club added you, so only your club can change this.</p>
+                ) : (
+                  <>
+                    <select
+                      id="select-edit-club"
+                      value={editClubId}
+                      onChange={(e) => setEditClubId(e.target.value)}
+                      className="w-full px-3 py-2.5 rounded-xl border border-[#fce7f3] text-xs font-semibold focus:ring-2 focus:ring-[#ec4899] focus:outline-none bg-white"
+                    >
+                      <option value="">No club selected</option>
+                      {clubs.map((club) => <option key={club.id} value={club.id}>{club.name} ({club.city})</option>)}
+                    </select>
+                    <p className="text-[11px] text-[#6b555c] mt-1">Your skill videos go to the club you choose here.</p>
+                  </>
+                )}
+              </div>
+            )}
 
             <div>
               <label className="text-xs font-bold text-[#1f1619] block mb-1">
@@ -366,6 +366,7 @@ export const ProfileScreen: React.FC = () => {
                 <input
                   type="tel"
                   id="input-edit-phone"
+                  required
                   value={editPhone}
                   onChange={(e) => setEditPhone(e.target.value)}
                   placeholder="+234 803 456 7890"
@@ -383,7 +384,7 @@ export const ProfileScreen: React.FC = () => {
                 <input
                   type="email"
                   id="input-edit-email"
-                  required
+                  readOnly
                   value={editEmail}
                   onChange={(e) => setEditEmail(e.target.value)}
                   placeholder="amara@gymtrack.ng"
@@ -393,6 +394,8 @@ export const ProfileScreen: React.FC = () => {
               </div>
             </div>
           </div>
+
+          {formError && <p className="text-sm text-red-600" role="alert">{formError}</p>}
 
           {/* SAVE BUTTON */}
           <div className="pt-2 flex items-center gap-3">
@@ -406,6 +409,7 @@ export const ProfileScreen: React.FC = () => {
             <button
               type="submit"
               id="btn-save-profile"
+              disabled={saving}
               className="w-2/3 py-3 rounded-full bg-gradient-to-r from-[#ec4899] via-[#f472b6] to-[#f59e0b] hover:opacity-95 text-white text-xs font-black shadow-md shadow-pink-500/25 flex items-center justify-center gap-2 active:scale-98 transition-all"
             >
               <Check className="w-4 h-4" />
@@ -415,8 +419,8 @@ export const ProfileScreen: React.FC = () => {
         </form>
       )}
 
-      {/* QUICK LEVEL SWITCHER (When not in full edit mode) */}
-      {!isEditing && (
+      {/* LEVEL (read only) */}
+      {!isEditing && isGymnast && (
         <div className="w-full p-4 rounded-3xl bg-white border border-[#fce7f3] shadow-xs text-left space-y-2.5">
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div className="flex items-center gap-2">
@@ -427,27 +431,60 @@ export const ProfileScreen: React.FC = () => {
               Current: Level {user.level}
             </span>
           </div>
-
-          <div className="flex flex-wrap gap-2 pt-1">
+          <div className="flex flex-wrap gap-2 pt-1" aria-label="Your level">
             {([1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as USAGLevel[]).map((lvl) => (
-              <button
+              <span
                 key={lvl}
-                id={`btn-profile-quick-level-${lvl}`}
-                onClick={() => {
-                  changeUserLevel(lvl);
-                  awardXp(10, `Switched to USAG Level ${lvl}!`);
-                }}
-                className={`w-9 h-9 rounded-full text-xs font-extrabold transition-all flex items-center justify-center ${
+                className={`w-9 h-9 rounded-full text-xs font-extrabold flex items-center justify-center ${
                   user.level === lvl
                     ? 'bg-[#ec4899] text-white shadow-md scale-105'
-                    : 'bg-[#fffdf0] text-[#854d0e] border border-[#fef08a] hover:bg-[#fef9c3]'
+                    : lvl < user.level
+                      ? 'bg-[#fef9c3] text-[#854d0e] border border-[#fef08a]'
+                      : 'bg-[#fffdf0] text-[#854d0e]/50 border border-[#fef08a]'
                 }`}
-                title={`Switch curriculum to Level ${lvl}`}
               >
                 {lvl}
-              </button>
+              </span>
             ))}
           </div>
+          {progress && progress.hasRequirements ? (
+            <p className="text-[11px] text-[#6b555c]">
+              {progress.approved} of {progress.required} required skills approved
+              {progress.pending > 0 ? `, ${progress.pending} waiting for your club` : ''}. You move up automatically when all are approved.
+            </p>
+          ) : (
+            <p className="text-[11px] text-[#6b555c]">This level has no standard requirements.</p>
+          )}
+        </div>
+      )}
+
+      {/* CLUB NOTICEBOARD (what the club posts shows here) */}
+      {!isEditing && notices.length > 0 && (
+        <div className="w-full p-4 rounded-3xl bg-white border border-[#fce7f3] shadow-xs text-left space-y-2">
+          <h2 className="text-sm font-black text-[#1f1619]">Club noticeboard</h2>
+          {notices.slice(0, 5).map((item) => (
+            <article key={item.id} className="border-t border-[#fce7f3] pt-2">
+              <h3 className="text-xs font-bold text-[#1f1619]">{item.title}</h3>
+              <p className="text-[11px] text-[#6b555c]">{item.body}</p>
+              <p className="text-[10px] text-[#6b555c]/70 mt-0.5">{new Date(item.createdAt).toLocaleDateString()}</p>
+            </article>
+          ))}
+        </div>
+      )}
+
+      {/* COMPETITION HISTORY (recorded by the club) */}
+      {!isEditing && isGymnast && (
+        <div className="w-full p-4 rounded-3xl bg-white border border-[#fce7f3] shadow-xs text-left space-y-2">
+          <h2 className="text-sm font-black text-[#1f1619]">Competition history</h2>
+          {competitions.length === 0 && <p className="text-[11px] text-[#6b555c]">No competitions recorded yet. Your club adds them after each event.</p>}
+          {competitions.map((item) => (
+            <article key={item.id} className="border-t border-[#fce7f3] pt-2 space-y-0.5">
+              <h3 className="text-xs font-bold text-[#1f1619]">{item.name} · {item.date}</h3>
+              {item.events.length > 0 && <p className="text-[11px] text-[#6b555c]">Events: {item.events.join(', ')}</p>}
+              {item.result && <p className="text-[11px] text-[#1f1619]">Result: {item.result}</p>}
+              {item.comments && <p className="text-[11px] text-[#6b555c]">{item.comments}</p>}
+            </article>
+          ))}
         </div>
       )}
 
@@ -482,60 +519,13 @@ export const ProfileScreen: React.FC = () => {
           <span className="text-xs text-[#6b555c] font-medium">5:00 PM West Africa Time</span>
         </div>
 
-        {/* Account Role / Perspective Switcher */}
-        <div className="p-3 rounded-2xl bg-[#fffdf0] border border-[#fef08a] space-y-2">
+        {/* Account type (set when the account was created) */}
+        <div className="p-3 rounded-2xl bg-[#fffdf0] border border-[#fef08a]">
           <div className="flex items-center justify-between text-xs">
-            <span className="font-bold text-[#854d0e]">Current Account Role:</span>
+            <span className="font-bold text-[#854d0e]">Account type:</span>
             <span className="px-2.5 py-0.5 rounded-full bg-[#fef9c3] border border-[#fef08a] text-[#854d0e] font-extrabold text-[10px]">
-              {userRole === 'GYMNAST' ? '🤸 Athlete / Gymnast' : userRole === 'COACH' ? '📋 Certified Coach' : '🏛️ Club Administrator'}
+              {userRole === 'GYMNAST' ? 'Student / Gymnast' : userRole === 'COACH' ? 'Coach' : 'Club administrator'}
             </span>
-          </div>
-          <p className="text-[11px] text-[#6b555c]">
-            Switch perspective to test the dedicated Club Dashboard, track event scores, and manage club rosters:
-          </p>
-          <div className="grid grid-cols-3 gap-1.5 pt-1">
-            <button
-              type="button"
-              onClick={() => {
-                setUserRole('GYMNAST');
-                setCurrentTab('home');
-              }}
-              className={`py-1.5 px-2 rounded-xl text-xs font-bold transition-all border ${
-                userRole === 'GYMNAST'
-                  ? 'bg-[#ec4899] text-white border-[#ec4899] shadow-xs'
-                  : 'bg-white text-[#6b555c] border-[#fce7f3]'
-              }`}
-            >
-              Gymnast
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setUserRole('COACH');
-                setCurrentTab('dashboard');
-              }}
-              className={`py-1.5 px-2 rounded-xl text-xs font-bold transition-all border ${
-                userRole === 'COACH'
-                  ? 'bg-[#ec4899] text-white border-[#ec4899] shadow-xs'
-                  : 'bg-white text-[#6b555c] border-[#fce7f3]'
-              }`}
-            >
-              Coach
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setUserRole('CLUB_ADMIN');
-                setCurrentTab('dashboard');
-              }}
-              className={`py-1.5 px-2 rounded-xl text-xs font-bold transition-all border ${
-                userRole === 'CLUB_ADMIN'
-                  ? 'bg-[#ec4899] text-white border-[#ec4899] shadow-xs'
-                  : 'bg-white text-[#6b555c] border-[#fce7f3]'
-              }`}
-            >
-              Club Admin
-            </button>
           </div>
         </div>
 
