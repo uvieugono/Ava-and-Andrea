@@ -16,7 +16,7 @@ export function setToken(token: string | null) {
 
 export function setAccess(status: string, payment: PaymentInstructions | null, devMatch = false, periodEnd: string | null = null) {
   sessionStorage.setItem(STATUS_KEY, status);
-  if (status !== 'paid' && status !== 'active' && payment) sessionStorage.setItem(DUE_KEY, JSON.stringify(payment));
+  if (status !== 'paid' && status !== 'active' && status !== 'club' && payment) sessionStorage.setItem(DUE_KEY, JSON.stringify(payment));
   else sessionStorage.removeItem(DUE_KEY);
   sessionStorage.setItem(DEV_KEY, devMatch ? '1' : '0');
   if (periodEnd) sessionStorage.setItem(UNTIL_KEY, periodEnd);
@@ -189,7 +189,8 @@ export interface ApiUser {
   clubId: string | null;
   clubName: string | null;
   status: string;
-  access?: 'trial' | 'paid' | 'locked';
+  /** 'club': the gymnast belongs to or chose a club, so they never pay themselves. */
+  access?: 'trial' | 'paid' | 'locked' | 'club';
   periodEnd?: string | null;
 }
 
@@ -238,6 +239,7 @@ export const gymApi = {
   save: (id: string) => request(`/api/inspo/${id}/save`, { method: 'POST' }),
   saved: () => request<{ posts: InspoPost[] }>('/api/inspo/saved'),
   liked: () => request<{ posts: InspoPost[] }>('/api/inspo/liked'),
+  post: (id: string) => request<{ post: InspoPost }>(`/api/inspo/post/${encodeURIComponent(id)}`),
   myVideos: () => request<{ posts: InspoPost[] }>('/api/inspo/mine'),
   deleteInspo: (id: string) => request<{ ok: boolean }>(`/api/inspo/${id}`, { method: 'DELETE' }),
   follow: (userId: string) => request('/api/follows', { method: 'POST', body: JSON.stringify({ userId }) }),
@@ -277,6 +279,7 @@ export const gymApi = {
       method: 'POST',
       body: JSON.stringify({ gymnastId, message }),
     }),
+  deleteDocument: (id: string) => request<{ ok: boolean }>(`/api/club/documents/${id}`, { method: 'DELETE' }),
   deleteNotice: (id: string) => request<{ ok: boolean }>(`/api/club/notices/${id}`, { method: 'DELETE' }),
   updateClubDetails: (input: { coachName?: string; logoUploadId?: string | null; signatureUploadId?: string | null }) =>
     request<{ club: ClubDetails }>('/api/club/details', { method: 'PATCH', body: JSON.stringify(input) }),
@@ -331,19 +334,91 @@ export async function uploadFile(
 ): Promise<{ id: string; url: string }> {
   if (file.size === 0) throw new UploadError('EMPTY_FILE', UPLOAD_MESSAGES.EMPTY_FILE);
   if (file.size > MAX_VIDEO_MB * 1024 * 1024) throw new UploadError('FILE_TOO_LARGE', UPLOAD_MESSAGES.FILE_TOO_LARGE);
-  const token = getToken();
   const name = options.name ?? (file instanceof File ? file.name : 'upload');
-  // XMLHttpRequest, not fetch, so the page can show how much has been sent.
-  const { status, body } = await new Promise<{ status: number; body: { id?: string; url?: string; code?: string } }>((resolve, reject) => {
+  const type = file.type || 'application/octet-stream';
+  const fail = (status: number, body: { code?: string }) => {
+    const code = body.code || (status === 413 ? 'FILE_TOO_LARGE' : 'ERROR');
+    return new UploadError(code, UPLOAD_MESSAGES[code] ?? 'The upload failed. Try again.');
+  };
+
+  if (file.size <= UPLOAD_PIECE_BYTES) {
+    const { status, body } = await send('POST', `/api/uploads?scope=${options.scope ?? 'private'}&name=${encodeURIComponent(name)}`, file, type, (sent) => {
+      options.onProgress?.(Math.round((sent / file.size) * 100));
+    });
+    if (status < 200 || status >= 300 || !body.url || !body.id) throw fail(status, body);
+    return { id: body.id, url: body.url };
+  }
+
+  // The live server refuses any single request over 32 MB, so a large file goes up in pieces.
+  const started = await send(
+    'POST',
+    `/api/uploads/sessions?scope=${options.scope ?? 'private'}&name=${encodeURIComponent(name)}&size=${file.size}`,
+    null,
+    'application/json',
+    () => undefined,
+    { 'x-upload-content-type': type },
+  );
+  if (started.status !== 201 || !started.body.id) throw fail(started.status, started.body);
+  const sessionId = started.body.id;
+  const pieceSize = Number(started.body.pieceSize) || UPLOAD_PIECE_BYTES;
+  let offset = 0;
+  let retries = 0;
+  for (;;) {
+    const piece = file.slice(offset, Math.min(offset + pieceSize, file.size));
+    let result: { status: number; body: UploadReply };
+    try {
+      result = await send('PUT', `/api/uploads/sessions/${sessionId}?offset=${offset}`, piece, 'application/octet-stream', (sent) => {
+        options.onProgress?.(Math.min(99, Math.round(((offset + sent) / file.size) * 100)));
+      });
+    } catch (error) {
+      // A dropped connection: try the same piece again a few times before giving up.
+      if (retries >= 3) throw error;
+      retries += 1;
+      continue;
+    }
+    if (result.status === 201 && result.body.url && result.body.id) {
+      options.onProgress?.(100);
+      return { id: result.body.id, url: result.body.url };
+    }
+    if (result.status === 200 || (result.status === 409 && typeof result.body.received === 'number')) {
+      offset = Number(result.body.received);
+      retries = 0;
+      continue;
+    }
+    if (result.status >= 500 && retries < 3) {
+      retries += 1;
+      continue;
+    }
+    throw fail(result.status, result.body);
+  }
+}
+
+/** Each piece of a large upload. The server answers with the size it uses. */
+const UPLOAD_PIECE_BYTES = 8 * 1024 * 1024;
+
+type UploadReply = { id?: string; url?: string; code?: string; received?: number; pieceSize?: number };
+
+/** One request with upload progress. XMLHttpRequest, not fetch, so the page can show how much has been sent. */
+function send(
+  method: string,
+  url: string,
+  body: Blob | null,
+  contentType: string,
+  onSent: (bytes: number) => void,
+  headers: Record<string, string> = {},
+): Promise<{ status: number; body: UploadReply }> {
+  const token = getToken();
+  return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', `/api/uploads?scope=${options.scope ?? 'private'}&name=${encodeURIComponent(name)}`);
-    xhr.setRequestHeader('content-type', file.type || 'application/octet-stream');
+    xhr.open(method, url);
+    xhr.setRequestHeader('content-type', contentType);
     if (token) xhr.setRequestHeader('authorization', `Bearer ${token}`);
+    for (const [key, value] of Object.entries(headers)) xhr.setRequestHeader(key, value);
     xhr.upload.onprogress = (event) => {
-      if (event.lengthComputable) options.onProgress?.(Math.round((event.loaded / event.total) * 100));
+      if (event.lengthComputable) onSent(event.loaded);
     };
     xhr.onload = () => {
-      let parsed = {};
+      let parsed: UploadReply = {};
       try {
         parsed = JSON.parse(xhr.responseText || '{}');
       } catch {
@@ -352,13 +427,8 @@ export async function uploadFile(
       resolve({ status: xhr.status, body: parsed });
     };
     xhr.onerror = () => reject(new UploadError('NETWORK', 'Could not reach GymTrack. Check your connection and try again.'));
-    xhr.send(file);
+    xhr.send(body);
   });
-  if (status < 200 || status >= 300 || !body.url || !body.id) {
-    const code = body.code || (status === 413 ? 'FILE_TOO_LARGE' : 'ERROR');
-    throw new UploadError(code, UPLOAD_MESSAGES[code] ?? 'The upload failed. Try again.');
-  }
-  return { id: body.id, url: body.url };
 }
 
 export interface InspoPost {

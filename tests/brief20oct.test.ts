@@ -10,6 +10,7 @@ import { createApp } from '../server/createApp.ts';
 import { requiredSkills } from '../server/workflow.ts';
 import { INITIAL_SKILLS } from '../src/data/gymData.ts';
 import { VERIFIED_CLUBS } from '../src/data/verifiedClubs.ts';
+import { driveStorage } from '../server/storage.ts';
 
 // Checks for the 20 October 2026 requirements brief.
 
@@ -241,6 +242,130 @@ test('a specific-club video file plays for that club and nobody else', async () 
     assert.equal((await fetchAs(ava.token)).status, 200);
     assert.equal((await fetchAs(chi.token)).status, 403);
     assert.equal((await fetchAs()).status, 401);
+  } finally {
+    t.server.close();
+  }
+});
+
+test('a large video arrives in pieces, out-of-order pieces are refused, and the file plays back whole', async () => {
+  const t = await start();
+  try {
+    const club = await t.club('Piece Club', 'piece@club.test');
+    const ava = await t.gymnast('piece-ava@gym.test', club.clubId);
+    const piece = 8 * 1024 * 1024;
+    const whole = Buffer.alloc(piece * 2 + 1234, 7);
+    whole[0] = 1;
+    whole[whole.length - 1] = 9;
+    const begin = await fetch(`${t.base}/api/uploads/sessions?scope=public&name=long.MOV&size=${whole.length}`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${ava.token}`, 'x-upload-content-type': '' },
+    });
+    // No type from the browser: the .MOV name is enough.
+    assert.equal(begin.status, 201);
+    const { id, pieceSize } = (await begin.json()) as { id: string; pieceSize: number };
+    assert.equal(pieceSize, piece);
+    const put = (offset: number, body: Buffer, token = ava.token) =>
+      fetch(`${t.base}/api/uploads/sessions/${id}?offset=${offset}`, { method: 'PUT', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/octet-stream' }, body });
+
+    assert.equal((await put(piece, whole.subarray(piece, piece * 2))).status, 409);
+    const first = await put(0, whole.subarray(0, piece));
+    assert.equal(first.status, 200);
+    assert.equal(((await first.json()) as { received: number }).received, piece);
+    // Someone else cannot add to it
+    const other = await t.gymnast('piece-bola@gym.test', club.clubId);
+    assert.equal((await put(piece, whole.subarray(piece, piece * 2), other.token)).status, 404);
+    assert.equal((await put(piece, whole.subarray(piece, piece * 2))).status, 200);
+    const last = await put(piece * 2, whole.subarray(piece * 2));
+    assert.equal(last.status, 201);
+    const done = (await last.json()) as { url: string; mime: string; size: number };
+    assert.equal(done.mime, 'video/quicktime');
+    assert.equal(done.size, whole.length);
+    const file = Buffer.from(await (await fetch(`${t.base}${done.url}`)).arrayBuffer());
+    assert.ok(file.equals(whole));
+    // Too big is refused before anything is stored
+    const tooBig = await fetch(`${t.base}/api/uploads/sessions?scope=public&name=x.mp4&size=${81 * 1024 * 1024}`, { method: 'POST', headers: { authorization: `Bearer ${ava.token}`, 'x-upload-content-type': 'video/mp4' } });
+    assert.equal(tooBig.status, 413);
+  } finally {
+    t.server.close();
+  }
+});
+
+test('Google Drive: a file in pieces uses one resumable session with the right byte ranges, and delete removes the Drive file', async () => {
+  const calls: { url: string; method: string; headers: Record<string, string>; size: number }[] = [];
+  const fake = (async (url: string, init: RequestInit = {}) => {
+    const headers = (init.headers ?? {}) as Record<string, string>;
+    const size = init.body instanceof Uint8Array ? init.body.length : 0;
+    calls.push({ url, method: String(init.method ?? 'GET'), headers, size });
+    if (url.includes('uploadType=resumable')) return new Response('{}', { status: 200, headers: { location: 'https://upload.test/s1' } });
+    if (url === 'https://upload.test/s1') {
+      return headers['content-range'].endsWith('-19/20') ? new Response(JSON.stringify({ id: 'drive-9' }), { status: 200 }) : new Response(null, { status: 308 });
+    }
+    if (url.includes('/drive/v3/files/drive-9') && init.method === 'DELETE') return new Response(null, { status: 204 });
+    return new Response('{}', { status: 404 });
+  }) as unknown as typeof fetch;
+  const drive = driveStorage('FOLDER', async () => 'tok', fake);
+  const session = await drive.begin('video/mp4', 'clip.mp4', 20, 'unused.mp4');
+  assert.equal(session, 'https://upload.test/s1');
+  assert.equal(calls[0].headers['x-upload-content-length'], '20');
+  assert.equal(await drive.append(session, Buffer.alloc(8), 0, 20), null);
+  assert.equal(await drive.append(session, Buffer.alloc(8), 8, 20), null);
+  assert.deepEqual(await drive.append(session, Buffer.alloc(4), 16, 20), { driveFileId: 'drive-9' });
+  assert.deepEqual(calls.slice(1).map((c) => c.headers['content-range']), ['bytes 0-7/20', 'bytes 8-15/20', 'bytes 16-19/20']);
+  await drive.remove({ id: 'u', ownerId: 'o', clubId: null, scope: 'private', mime: 'video/mp4', name: 'clip.mp4', size: 20, driveFileId: 'drive-9', createdAt: '' });
+  assert.equal(calls.at(-1)?.method, 'DELETE');
+});
+
+test('a gymnast with a club never has to pay; one without a club does once the free week ends', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gymtrack-pay-'));
+  let clock = Date.parse('2026-10-24T09:00:00Z');
+  const app = await createApp({ dbPath: path.join(dir, 'db.json'), uploadDir: path.join(dir, 'uploads'), webhookSecret: 'test-secret', devMatch: false, notifiers: {}, now: () => new Date(clock) });
+  const server = app.listen(0);
+  await once(server, 'listening');
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const call = async (method: string, url: string, token?: string, body?: unknown) => {
+    const r = await fetch(`${base}${url}`, { method, headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
+    return { status: r.status, body: (await r.json().catch(() => ({}))) as any };
+  };
+  try {
+    const club = await call('POST', '/api/auth/register-club', undefined, { clubName: 'Pay Club', city: 'Lagos', adminName: 'Admin', email: 'pay@club.test', password: PASSWORD, phone: '08030000000' });
+    const signup = (email: string, selectedClubId: string | null) =>
+      call('POST', '/api/auth/signup-student', undefined, { name: 'Gymnast', email, password: PASSWORD, phone: '08031234567', dateOfBirth: '2014-01-01', level: 1, selectedClubId });
+    const withClub = await signup('with-club@gym.test', club.body.club.id);
+    const noClub = await signup('no-club@gym.test', null);
+    assert.equal(withClub.body.user.access, 'club');
+    assert.equal(withClub.body.payment, null);
+    assert.equal(noClub.body.user.access, 'trial');
+
+    clock += 30 * 86400000; // a month later
+    const meWith = await call('GET', '/api/me', withClub.body.token);
+    const meWithout = await call('GET', '/api/me', noClub.body.token);
+    assert.equal(meWith.body.user.access, 'club');
+    assert.equal(meWith.body.user.periodEnd, null);
+    assert.equal(meWithout.body.user.access, 'locked');
+    assert.ok(meWithout.body.payment);
+    // Paid-only actions: the club gymnast is let through, the other is asked to pay
+    assert.equal((await call('GET', '/api/inspo/saved', withClub.body.token)).status, 200);
+    assert.equal((await call('GET', '/api/inspo/saved', noClub.body.token)).body.code, 'PAYMENT_REQUIRED');
+    // Choosing a club later also ends the need to pay
+    await call('PATCH', '/api/me', noClub.body.token, { selectedClubId: club.body.club.id });
+    assert.equal((await call('GET', '/api/me', noClub.body.token)).body.user.access, 'club');
+  } finally {
+    server.close();
+  }
+});
+
+test('a club deletes a stored document, and another club cannot', async () => {
+  const t = await start();
+  try {
+    const alpha = await t.club('Doc Club', 'doc-a@club.test');
+    const beta = await t.club('Other Club', 'doc-b@club.test');
+    const file = await t.upload(alpha.token, 'private', 'application/pdf', '%PDF-1.4 handbook');
+    const doc = await t.call('POST', '/api/club/documents', alpha.token, { name: 'Handbook.pdf', uploadId: file.body.id });
+    assert.equal((await t.call('DELETE', `/api/club/documents/${doc.body.document.id}`, beta.token)).status, 404);
+    assert.equal((await t.call('DELETE', `/api/club/documents/${doc.body.document.id}`, alpha.token)).status, 200);
+    assert.equal((await t.call('GET', '/api/club/overview', alpha.token)).body.documents.length, 0);
+    const gone = await fetch(`${t.base}${file.body.url}`, { headers: { authorization: `Bearer ${alpha.token}` } });
+    assert.equal(gone.status, 404);
   } finally {
     t.server.close();
   }

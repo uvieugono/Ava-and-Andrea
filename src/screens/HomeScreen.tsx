@@ -4,6 +4,7 @@ import { useGym } from '../context/GymContext';
 import { matchingTutorial, requiredSkillsFor, submissionLabel } from '../lib/curriculum';
 import { OPTIONAL_LEVEL_NOTE, levelHasRequirements } from '../data/curriculumUpdates';
 import { ContactForm } from '../components/ContactForm';
+import { Avatar } from '../components/Avatar';
 
 // Today's conditioning exercises, from the 20 October 2026 brief.
 const CONDITIONING = [
@@ -21,7 +22,7 @@ export const HomeScreen: React.FC = () => {
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-6 py-6 space-y-10">
       <section className="flex items-center gap-4">
-        <img src={user.avatar} alt="" className="w-16 h-16 rounded-full object-cover" />
+        <Avatar src={user.avatar} name={user.fullName} className="w-16 h-16 rounded-full text-lg" />
         <div>
           <h1 className="font-display text-3xl text-[#3E1B4A]">{user.fullName}</h1>
           <p className="text-[#5C4A68]">{user.clubName || 'No club selected yet'}</p>

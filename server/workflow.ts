@@ -129,6 +129,21 @@ export interface UploadRecord {
   createdAt: string;
 }
 
+/** A large file arriving in pieces. */
+export interface UploadSessionRecord {
+  id: string;
+  ownerId: string;
+  clubId: string | null;
+  scope: 'public' | 'private';
+  mime: string;
+  name: string;
+  size: number;
+  received: number;
+  /** Drive resumable-upload address, or the file name on disk. */
+  session: string;
+  createdAt: string;
+}
+
 export interface Notifiers {
   mail?: (message: { name: string; phone: string; message: string }) => Promise<void>;
   /** Files the enquiry as a ticket on GymTrack's SolyntaFlow company. */
@@ -629,6 +644,21 @@ export function createWorkflow(
       return record;
     },
 
+    /** Removes a club document and its upload record. Returns the upload so the stored file can be deleted too. */
+    async deleteDocument(staff: UserRecord, documentId: string) {
+      const clubId = requireStaff(staff);
+      const document = db.documents.find((item) => item.id === documentId);
+      if (!document || document.clubId !== clubId) throw new Error('NOT_FOUND');
+      db.documents = db.documents.filter((item) => item.id !== documentId);
+      const upload = db.uploads.find((item) => item.id === document.uploadId) ?? null;
+      // Only drop the upload when nothing else points at it.
+      if (upload && !db.documents.some((item) => item.uploadId === upload.id)) {
+        db.uploads = db.uploads.filter((item) => item.id !== upload.id);
+      }
+      await save();
+      return upload;
+    },
+
     documentsFor(user: UserRecord) {
       if (!isStaff(user)) return [];
       return db.documents.filter((item) => item.clubId === user.clubId).sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt));
@@ -740,6 +770,43 @@ export function createWorkflow(
       }
       if (sent) await save();
       return sent;
+    },
+
+    async startUploadSession(input: Omit<UploadSessionRecord, 'id' | 'createdAt' | 'received'>) {
+      // Sessions older than a day were abandoned.
+      const cutoff = new Date(now().getTime() - 86400000).toISOString();
+      db.uploadSessions = db.uploadSessions.filter((item) => item.createdAt > cutoff);
+      const record: UploadSessionRecord = { ...input, id: newId('ups'), received: 0, createdAt: now().toISOString() };
+      db.uploadSessions.push(record);
+      await save();
+      return record;
+    },
+
+    uploadSessionById(sessionId: string) {
+      return db.uploadSessions.find((item) => item.id === sessionId) ?? null;
+    },
+
+    async recordUploadProgress(session: UploadSessionRecord, received: number) {
+      session.received = received;
+      await save();
+    },
+
+    async finishUploadSession(session: UploadSessionRecord, stored: Pick<UploadRecord, 'file' | 'driveFileId'>) {
+      db.uploadSessions = db.uploadSessions.filter((item) => item.id !== session.id);
+      const record: UploadRecord = {
+        id: newId('upl'),
+        ownerId: session.ownerId,
+        clubId: session.clubId,
+        scope: session.scope,
+        mime: session.mime,
+        name: session.name,
+        size: session.size,
+        ...stored,
+        createdAt: now().toISOString(),
+      };
+      db.uploads.push(record);
+      await save();
+      return record;
     },
 
     async saveUpload(input: Omit<UploadRecord, 'id' | 'createdAt'>) {

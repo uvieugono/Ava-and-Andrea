@@ -20,7 +20,9 @@ import { GymDashboardScreen } from './screens/GymDashboardScreen';
 import { PageSketch } from './components/GymnastSketch';
 
 const MainApp: React.FC = () => {
-  const { user, ready, currentTab, userRole, isStaff, logoutUser } = useGym();
+  const { user, ready, currentTab: selectedTab, userRole, isStaff, logoutUser } = useGym();
+  // Club accounts never see the gymnast pages (Home, Skills, My Progress).
+  const currentTab = isStaff && (selectedTab === 'home' || selectedTab === 'skills' || selectedTab === 'progress') ? 'dashboard' : selectedTab;
   const [paidOpen, setPaidOpen] = useState(false);
 
   useEffect(() => {

@@ -5,6 +5,7 @@ import { AddStudentsPanel } from '../components/AddStudentsPanel';
 import { ClubCompetitions, ClubDrills, DrillDialog, medalLabel } from '../components/ClubPrograms';
 import { RosterGymnast, CoachNote } from '../types';
 import { mediaUrl } from '../services/gymApi';
+import { Avatar } from '../components/Avatar';
 import { 
   Building2, 
   Users, 
@@ -353,8 +354,7 @@ export const GymDashboardScreen: React.FC = () => {
         {userRole === 'CLUB_ADMIN' && addingGymnast && <AddStudentsPanel />}
       </section>
 
-      <ClubOffice />
-      <ClubDrills />
+      <ClubOffice afterAttendance={<ClubDrills />} />
       <ClubCompetitions />
 
       {/* 2. ROSTER SEARCH & LEVEL FILTERS */}
@@ -452,10 +452,10 @@ export const GymDashboardScreen: React.FC = () => {
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex items-center gap-3">
                       <div className="relative shrink-0">
-                        <img
+                        <Avatar
                           src={gymnast.avatar}
-                          alt={gymnast.name}
-                          className="w-14 h-14 rounded-full object-cover ring-2 ring-[#5C2A6E]/30 border-2 border-white shadow-2xs"
+                          name={gymnast.name}
+                          className="w-14 h-14 rounded-full ring-2 ring-[#5C2A6E]/30 border-2 border-white shadow-2xs"
                         />
                         <span className="absolute -bottom-1 -right-1 px-2 py-0.2 bg-[#5C2A6E] text-white text-[10px] font-black rounded-full border border-white">
                           L{gymnast.level}
@@ -548,10 +548,10 @@ export const GymDashboardScreen: React.FC = () => {
             <div className="p-5 sm:p-6 bg-gradient-to-r from-[#F4EEF8] via-[#F4EEF8] to-white border-b border-[#E4D7EE] rounded-t-3xl">
               <div className="flex items-start justify-between gap-4">
                 <div className="flex items-center gap-4">
-                  <img
+                  <Avatar
                     src={activeGymnast.avatar}
-                    alt={activeGymnast.name}
-                    className="w-16 h-16 sm:w-20 sm:h-20 rounded-full object-cover ring-4 ring-[#5C2A6E]/30 border-2 border-white shadow-md shrink-0"
+                    name={activeGymnast.name}
+                    className="w-16 h-16 sm:w-20 sm:h-20 rounded-full ring-4 ring-[#5C2A6E]/30 border-2 border-white shadow-md shrink-0 text-xl"
                   />
                   <div>
                     <div className="flex items-center gap-2 flex-wrap">

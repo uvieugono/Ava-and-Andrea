@@ -16,6 +16,7 @@ import {
   type Notifiers,
   type SubmissionRecord,
   type UploadRecord,
+  type UploadSessionRecord,
 } from './workflow.ts';
 
 export const MONTHLY_FEE_NGN = 1000;
@@ -144,6 +145,7 @@ export interface DatabaseShape {
   uploads: UploadRecord[];
   certificates: CertificateRecord[];
   drills: DrillRecord[];
+  uploadSessions: UploadSessionRecord[];
 }
 
 const CITY_COORDS: Record<string, [number, number]> = {
@@ -175,6 +177,7 @@ export function emptyDb(): DatabaseShape {
     uploads: [],
     certificates: [],
     drills: [],
+    uploadSessions: [],
   };
 }
 
@@ -265,9 +268,9 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
       offersBeam: user.offersBeam !== false,
       progress: user.role === 'GYMNAST' ? workflow.progressFor(user) : null,
       status: user.status,
-      periodEnd: accessUntil(user),
+      periodEnd: clubAffiliated(user) ? null : accessUntil(user),
       clubTrialEndsAt: clubTrialEnd(user),
-      access: accessOpen(user) ? (user.status === 'active' ? 'paid' : 'trial') : 'locked',
+      access: clubAffiliated(user) ? 'club' : accessOpen(user) ? (user.status === 'active' ? 'paid' : 'trial') : 'locked',
       age: user.showAge ? age : null,
       showLevel: user.showLevel,
       under18: age !== null && age < 18,
@@ -302,6 +305,7 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
   }
 
   function paymentFor(user: UserRecord) {
+    if (clubAffiliated(user)) return null;
     const payment = db.payments.find((item) => item.status === 'pending' && item.studentIds.includes(user.id));
     return payment ? paymentView(payment) : null;
   }
@@ -323,7 +327,18 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
     return new Date(Math.max(...times)).toISOString();
   }
 
+  /**
+   * A gymnast who belongs to or chose a registered club uses the app through the
+   * club, so they never need their own subscription. Only gymnasts with no club pay.
+   */
+  function clubAffiliated(user: UserRecord) {
+    if (user.role !== 'GYMNAST') return false;
+    const clubId = user.clubId ?? user.selectedClubId ?? null;
+    return Boolean(clubId && db.clubs.some((item) => item.id === clubId));
+  }
+
   function accessOpen(user: UserRecord) {
+    if (clubAffiliated(user)) return true;
     const until = accessUntil(user);
     return Boolean(until && new Date(until).getTime() > now().getTime());
   }
@@ -537,6 +552,12 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
       const created = await createPendingStudents([input], null);
       const record = db.users.find((item) => item.id === created.students[0]?.id);
       if (!record) throw new Error('ERROR');
+      // A gymnast who chose a club does not pay, so no payment is opened for them.
+      if (clubAffiliated(record)) {
+        db.payments = db.payments.filter((item) => item.reference !== created.payment.reference);
+        await save();
+        return { ...created, payment: null, token: await issueToken(record.id), user: publicUser(record) };
+      }
       return { ...created, token: await issueToken(record.id), user: publicUser(record) };
     },
 
@@ -734,6 +755,13 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
       }
       await save();
       return presentPost(post, user);
+    },
+
+    /** One video, for a shared link. Only if the viewer is allowed to see it. */
+    postById(viewer: UserRecord | null, postId: string) {
+      const post = db.posts.find((item) => item.id === postId);
+      if (!post || !canSeePost(viewer, post)) return null;
+      return presentPost(post, viewer);
     },
 
     likedPosts(user: UserRecord) {
