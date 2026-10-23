@@ -32,7 +32,7 @@ import {
 export const ClubsScreen: React.FC = () => {
   const { registeredClubs, user, setCurrentTab } = useGym();
   const [searchQuery, setSearchQuery] = useState('');
-  const [cityFilter, setCityFilter] = useState<'All' | 'Lagos' | 'Abuja'>('All');
+  const [cityFilter, setCityFilter] = useState<'All' | 'Lagos'>('All');
   const [nearCity, setNearCity] = useState<string | null>(null);
   const [regionFilter, setRegionFilter] = useState<'ALL' | 'NIGERIA' | 'AFRICA' | 'INTERNATIONAL'>('ALL');
   const [selectedClubForModal, setSelectedClubForModal] = useState<RegisteredClub | null>(null);
@@ -138,12 +138,12 @@ export const ClubsScreen: React.FC = () => {
         <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
           <div>
             <h1 className="font-display text-3xl text-[#3E1B4A]">Find a Club</h1>
-            <p className="text-sm text-[#5C4A68] mt-1">Gymnastics clubs in Lagos and Abuja. Blank fields are not filled in.</p>
+            <p className="text-sm text-[#5C4A68] mt-1">Gymnastics clubs in Lagos. Blank fields are not filled in.</p>
           </div>
           <button type="button" onClick={handleStartRegistration} className="px-4 py-2 rounded-full bg-[#5C2A6E] text-white text-sm">Register your club</button>
         </div>
         <div className="flex flex-wrap gap-2">
-          {(['All', 'Lagos', 'Abuja'] as const).map((city) => (
+          {(['All', 'Lagos'] as const).map((city) => (
             <button key={city} type="button" onClick={() => setCityFilter(city)} className={`px-3 py-1 rounded-full text-sm ${cityFilter === city ? 'bg-[#5C2A6E] text-white' : 'bg-white border border-[#E4D7EE]'}`}>{city}</button>
           ))}
         </div>

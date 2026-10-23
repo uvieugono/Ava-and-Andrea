@@ -40,6 +40,41 @@ export interface CompetitionRecord {
   result: string;
   comments: string;
   createdAt: string;
+  /** Set when the club published the event for several gymnasts at once. */
+  eventId?: string;
+  time?: string;
+  venue?: string;
+  /** The level the gymnast competed at. */
+  level?: string;
+  medal?: Medal;
+}
+
+export type Medal = '' | 'gold' | 'silver' | 'bronze';
+const MEDALS: Medal[] = ['', 'gold', 'silver', 'bronze'];
+
+export interface CertificateRecord {
+  id: string;
+  clubId: string;
+  gymnastId: string | null;
+  gymnastName: string;
+  title: string;
+  awardDate: string;
+  template: string;
+  uploadId: string;
+  issuedBy: string;
+  createdAt: string;
+}
+
+export interface DrillRecord {
+  id: string;
+  clubId: string;
+  gymnastIds: string[];
+  title: string;
+  description: string;
+  instructions: string;
+  attachmentUploadId: string | null;
+  createdBy: string;
+  createdAt: string;
 }
 
 export interface DocumentRecord {
@@ -121,6 +156,7 @@ export function requiredSkills(user: Pick<UserRecord, 'level' | 'offersBars' | '
   if (!levelHasRequirements(level)) return [];
   return INITIAL_SKILLS.filter((skill) => {
     if (skill.level !== level) return false;
+    if (skill.optional) return false;
     if (skill.category === 'BARS' && user.offersBars === false) return false;
     if (skill.category === 'BEAM' && user.offersBeam === false) return false;
     return true;
@@ -224,6 +260,25 @@ export function createWorkflow(
   function requireStaff(user: UserRecord) {
     if (!isStaff(user)) throw new Error('FORBIDDEN');
     return user.clubId as string;
+  }
+
+  function clubDetails(clubId: string) {
+    const club = db.clubs.find((item) => item.id === clubId);
+    return {
+      name: club?.name ?? '',
+      coachName: club?.coachName ?? '',
+      logoUrl: club?.logoUploadId ? `/api/uploads/${club.logoUploadId}` : null,
+      signatureUrl: club?.signatureUploadId ? `/api/uploads/${club.signatureUploadId}` : null,
+    };
+  }
+
+  /** An image the staff member uploaded for their club, or null to clear it. */
+  function staffImage(staff: UserRecord, uploadId: string | null | undefined) {
+    if (uploadId === undefined) return undefined;
+    if (!uploadId) return null;
+    const upload = db.uploads.find((item) => item.id === uploadId);
+    if (!upload || upload.ownerId !== staff.id || !upload.mime.startsWith('image/')) throw new Error('UPLOAD_INVALID');
+    return upload.id;
   }
 
   function requireMember(staff: UserRecord, gymnastId: string) {
@@ -346,8 +401,11 @@ export function createWorkflow(
             .filter((comp) => comp.gymnastId === item.id)
             .sort((a, b) => b.date.localeCompare(a.date)),
         })),
+        club: clubDetails(clubId),
         notices: db.notices.filter((item) => item.clubId === clubId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
         documents: db.documents.filter((item) => item.clubId === clubId).sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt)),
+        certificates: db.certificates.filter((item) => item.clubId === clubId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+        drills: db.drills.filter((item) => item.clubId === clubId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
         attendance: db.attendance.filter((item) => item.clubId === clubId && ids.has(item.gymnastId) && item.date >= since),
         feeReminders: db.feeReminders.filter((item) => item.clubId === clubId).sort((a, b) => b.sentAt.localeCompare(a.sentAt)).slice(0, 50),
       };
@@ -362,6 +420,165 @@ export function createWorkflow(
       db.notices.push(record);
       await save();
       return record;
+    },
+
+    /** Only the club's administrator can delete the club's notices. */
+    async deleteNotice(staff: UserRecord, noticeId: string) {
+      const clubId = requireStaff(staff);
+      if (staff.role !== 'CLUB_ADMIN') throw new Error('FORBIDDEN');
+      const notice = db.notices.find((item) => item.id === noticeId);
+      if (!notice || notice.clubId !== clubId) throw new Error('NOT_FOUND');
+      db.notices = db.notices.filter((item) => item.id !== noticeId);
+      await save();
+      return { ok: true };
+    },
+
+    async updateClubDetails(staff: UserRecord, input: { coachName?: string; logoUploadId?: string | null; signatureUploadId?: string | null }) {
+      const clubId = requireStaff(staff);
+      if (staff.role !== 'CLUB_ADMIN') throw new Error('FORBIDDEN');
+      const club = db.clubs.find((item) => item.id === clubId);
+      if (!club) throw new Error('NOT_FOUND');
+      const logo = staffImage(staff, input.logoUploadId);
+      const signature = staffImage(staff, input.signatureUploadId);
+      if (input.coachName !== undefined) club.coachName = String(input.coachName).trim().slice(0, 120);
+      if (logo !== undefined) club.logoUploadId = logo;
+      if (signature !== undefined) club.signatureUploadId = signature;
+      await save();
+      return clubDetails(clubId);
+    },
+
+    /** Saves a certificate the club generated. The image itself is an upload the staff member made. */
+    async addCertificate(staff: UserRecord, input: { gymnastId?: string | null; gymnastName?: string; title?: string; awardDate?: string; template?: string; uploadId?: string }) {
+      const clubId = requireStaff(staff);
+      const title = (input.title ?? '').trim();
+      const awardDate = String(input.awardDate ?? '');
+      let gymnastName = (input.gymnastName ?? '').trim();
+      let gymnastId: string | null = null;
+      if (input.gymnastId) {
+        const { gymnast } = requireMember(staff, input.gymnastId);
+        gymnastId = gymnast.id;
+        gymnastName = gymnastName || gymnast.name;
+      }
+      if (!gymnastName || !title) throw new Error('MISSING');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(awardDate)) throw new Error('DATE');
+      const upload = db.uploads.find((item) => item.id === input.uploadId);
+      if (!upload || upload.ownerId !== staff.id || !(upload.mime.startsWith('image/') || upload.mime === 'application/pdf')) throw new Error('UPLOAD_INVALID');
+      const record: CertificateRecord = {
+        id: newId('crt'),
+        clubId,
+        gymnastId,
+        gymnastName: gymnastName.slice(0, 120),
+        title: title.slice(0, 160),
+        awardDate,
+        template: String(input.template ?? '').slice(0, 40),
+        uploadId: upload.id,
+        issuedBy: staff.name,
+        createdAt: now().toISOString(),
+      };
+      db.certificates.push(record);
+      await save();
+      return record;
+    },
+
+    /** Staff see their club's certificates; a gymnast sees the ones made out to them. */
+    certificatesFor(user: UserRecord) {
+      const mine = isStaff(user)
+        ? db.certificates.filter((item) => item.clubId === user.clubId)
+        : db.certificates.filter((item) => item.gymnastId === user.id);
+      return mine.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    },
+
+    async addDrill(staff: UserRecord, input: { gymnastIds?: string[]; title?: string; description?: string; instructions?: string; attachmentUploadId?: string | null }) {
+      const clubId = requireStaff(staff);
+      const title = (input.title ?? '').trim();
+      if (!title) throw new Error('MISSING');
+      const gymnastIds = Array.from(new Set(input.gymnastIds ?? []));
+      if (gymnastIds.length === 0) throw new Error('NO_GYMNASTS');
+      for (const gymnastId of gymnastIds) requireMember(staff, gymnastId);
+      let attachmentUploadId: string | null = null;
+      if (input.attachmentUploadId) {
+        const upload = db.uploads.find((item) => item.id === input.attachmentUploadId);
+        if (!upload || upload.ownerId !== staff.id) throw new Error('UPLOAD_INVALID');
+        attachmentUploadId = upload.id;
+      }
+      const record: DrillRecord = {
+        id: newId('drl'),
+        clubId,
+        gymnastIds,
+        title: title.slice(0, 200),
+        description: (input.description ?? '').trim().slice(0, 2000),
+        instructions: (input.instructions ?? '').trim().slice(0, 4000),
+        attachmentUploadId,
+        createdBy: staff.name,
+        createdAt: now().toISOString(),
+      };
+      db.drills.push(record);
+      await save();
+      return record;
+    },
+
+    /** Staff see their club's drills; a gymnast sees the drills assigned to them. */
+    drillsFor(user: UserRecord) {
+      const list = isStaff(user)
+        ? db.drills.filter((item) => item.clubId === user.clubId)
+        : db.drills.filter((item) => item.gymnastIds.includes(user.id));
+      return list.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    },
+
+    /** One event for several gymnasts: each gets their own record with their level, result and medal. */
+    async addCompetitionEvent(staff: UserRecord, input: { name?: string; date?: string; time?: string; venue?: string; participants?: { gymnastId: string; level?: string; result?: string; medal?: string }[] }) {
+      const clubId = requireStaff(staff);
+      const name = (input.name ?? '').trim();
+      if (!name) throw new Error('MISSING');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date ?? '') || Number.isNaN(new Date(input.date as string).getTime())) throw new Error('DATE');
+      const participants = input.participants ?? [];
+      if (participants.length === 0) throw new Error('NO_GYMNASTS');
+      if (new Set(participants.map((item) => item.gymnastId)).size !== participants.length) throw new Error('DUPLICATE_GYMNAST');
+      const checked = participants.map((item) => {
+        const { gymnast } = requireMember(staff, item.gymnastId);
+        const medal = String(item.medal ?? '') as Medal;
+        if (!MEDALS.includes(medal)) throw new Error('MEDAL');
+        return { gymnast, level: String(item.level ?? '').trim().slice(0, 40), result: String(item.result ?? '').trim().slice(0, 1000), medal };
+      });
+      const eventId = newId('evt');
+      const created = now().toISOString();
+      const records: CompetitionRecord[] = checked.map((item) => ({
+        id: newId('cmp'),
+        clubId,
+        gymnastId: item.gymnast.id,
+        name: name.slice(0, 200),
+        date: input.date as string,
+        events: [],
+        result: item.result,
+        comments: '',
+        createdAt: created,
+        eventId,
+        time: String(input.time ?? '').trim().slice(0, 20),
+        venue: String(input.venue ?? '').trim().slice(0, 300),
+        level: item.level,
+        medal: item.medal,
+      }));
+      db.competitions.push(...records);
+      await save();
+      return records;
+    },
+
+    /** Logs or changes results after the event. Only gymnasts already entered can be updated. */
+    async recordCompetitionResults(staff: UserRecord, eventId: string, results: { gymnastId: string; result?: string; medal?: string; level?: string }[]) {
+      const clubId = requireStaff(staff);
+      const entries = db.competitions.filter((item) => item.clubId === clubId && item.eventId === eventId);
+      if (entries.length === 0) throw new Error('NOT_FOUND');
+      for (const item of results ?? []) {
+        const entry = entries.find((row) => row.gymnastId === item.gymnastId);
+        if (!entry) throw new Error('NOT_FOUND');
+        const medal = String(item.medal ?? entry.medal ?? '') as Medal;
+        if (!MEDALS.includes(medal)) throw new Error('MEDAL');
+        if (item.result !== undefined) entry.result = String(item.result).trim().slice(0, 1000);
+        if (item.level !== undefined) entry.level = String(item.level).trim().slice(0, 40);
+        entry.medal = medal;
+      }
+      await save();
+      return entries;
     },
 
     /** Notices the viewer's club has posted. Staff see their club's; gymnasts see the club they belong to or chose. */
@@ -542,6 +759,9 @@ export function createWorkflow(
       if (upload.ownerId === user.id) return true;
       if (isStaff(user) && upload.clubId && upload.clubId === user.clubId) return true;
       if (isStaff(user) && db.submissions.some((item) => item.videoUrl === `/api/uploads/${upload.id}` && item.clubId === user.clubId)) return true;
+      // A gymnast can open their own certificates and the attachments of drills assigned to them.
+      if (db.certificates.some((item) => item.uploadId === upload.id && item.gymnastId === user.id)) return true;
+      if (db.drills.some((item) => item.attachmentUploadId === upload.id && item.gymnastIds.includes(user.id))) return true;
       return false;
     },
   };

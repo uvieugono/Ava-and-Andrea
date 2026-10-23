@@ -47,6 +47,8 @@ export interface Skill {
   writtenTutorial?: WrittenTutorial;
   curriculumSource?: 'GYMFEST_DOC' | 'USAG_GAP';
   gymfestTier?: 'SILVER' | 'GOLD' | 'PLATINUM';
+  /** Listed for the level but not needed to move up. */
+  optional?: boolean;
 }
 
 export interface SkillsGapReviewItem {
@@ -360,7 +362,20 @@ export interface RosterGymnast {
   evidenceSubmissions: RosterEvidenceSubmission[];
   phone?: string;
   isMember?: boolean;
-  competitions?: { id: string; name: string; date: string; events: string[]; result: string; comments: string }[];
+  competitions?: {
+    id: string;
+    gymnastId: string;
+    name: string;
+    date: string;
+    events: string[];
+    result: string;
+    comments: string;
+    eventId?: string;
+    time?: string;
+    venue?: string;
+    level?: string;
+    medal?: '' | 'gold' | 'silver' | 'bronze';
+  }[];
   hasRequirements?: boolean;
   pendingCount?: number;
 }

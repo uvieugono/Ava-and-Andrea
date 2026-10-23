@@ -83,7 +83,8 @@ test('a club trial keeps a member in the app after their own week is cleared', a
     category: 'Floor' as const,
     visibility: 'everyone' as const,
   };
-  await assert.rejects(() => store.createPost(student, post), /PARENT_REQUIRED/);
+  // No parent approval step: a fake video link is refused for being invalid, not for a missing parent.
+  await assert.rejects(() => store.createPost(student, post), /VIDEO_INVALID/);
   db.clubs[0].trialEndsAt = new Date(Date.now() - 1000).toISOString();
   await assert.rejects(() => store.createPost(student, post), /PAYMENT_REQUIRED/);
 });
@@ -137,8 +138,8 @@ test('club signup allocates paid students and a direct signup has no club', asyn
       headers: { 'content-type': 'application/json', authorization: `Bearer ${tooSoon.body.token}` },
       body: JSON.stringify({ videoUrl: 'clip.mp4', caption: 'Try', skill: 'Cartwheel', category: 'Floor', visibility: 'everyone' }),
     }));
-    assert.equal(duringTrial.status, 403);
-    assert.equal(duringTrial.body.code, 'PARENT_REQUIRED');
+    assert.equal(duringTrial.status, 400);
+    assert.equal(duringTrial.body.code, 'VIDEO_INVALID');
     advance(8);
     const locked = await json(await fetch(`${base}/api/inspo`, {
       method: 'POST',
@@ -226,7 +227,7 @@ test('club signup allocates paid students and a direct signup has no club', asyn
   }
 });
 
-test('inspo hides club videos and waits for a parent before a child publishes', async () => {
+test('inspo hides club videos from other clubs, and a child publishes without a parent step', async () => {
   const { server, base } = await start();
   try {
     const club = await json(await fetch(`${base}/api/auth/register-club`, {
@@ -282,14 +283,8 @@ test('inspo hides club videos and waits for a parent before a child publishes', 
         showLevel: true,
       }),
     }));
-    assert.equal(blocked.status, 403);
-    assert.equal(blocked.body.code, 'PARENT_REQUIRED');
-
-    await fetch(`${base}/api/students/${ava.body.user.id}/parent`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ parentEmail: 'mum@gym.test' }),
-    });
+    assert.equal(blocked.status, 400);
+    assert.equal(blocked.body.code, 'VIDEO_INVALID');
     const posted = await json(await fetch(`${base}/api/inspo`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${ava.body.token}` },

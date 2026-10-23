@@ -4,6 +4,7 @@ import { matchingTutorial, requiredSkillsFor } from '../lib/curriculum';
 import { OPTIONAL_LEVEL_NOTE, levelHasRequirements } from '../data/curriculumUpdates';
 import { SkillStatusBadge } from '../components/SkillStatusBadge';
 import { SkillSubmit } from '../components/SkillSubmit';
+import { mediaUrl } from '../services/gymApi';
 
 export const ProgressScreen: React.FC = () => {
   const { user, skills, openSkill, saveProfile, certificates } = useGym();
@@ -15,7 +16,8 @@ export const ProgressScreen: React.FC = () => {
   const noRequirements = !levelHasRequirements(user.level);
   const mastered = required.filter((skill) => skill.status === 'VERIFIED');
   const remaining = required.filter((skill) => skill.status !== 'VERIFIED');
-  const mine = certificates.filter((item) => item.gymnastName === user.fullName);
+  // The server only sends this gymnast's own certificates.
+  const mine = certificates;
 
   const setApparatus = async (input: { offersBars?: boolean; offersBeam?: boolean }) => {
     const result = await saveProfile(input);
@@ -35,7 +37,7 @@ export const ProgressScreen: React.FC = () => {
           <span className="font-display text-3xl">{mastered.length}</span>
         </button>
         <button type="button" onClick={() => setPanel('unlock')} className={`text-left rounded-2xl border p-4 ${panel === 'unlock' ? 'bg-[#5C2A6E] text-white border-[#5C2A6E]' : 'bg-white border-[#E4D7EE]'}`}>
-          <span className="block text-sm">To Unlock</span>
+          <span className="block text-sm">Skills in Progress</span>
           <span className="font-display text-3xl">{remaining.length}</span>
         </button>
       </section>
@@ -55,7 +57,7 @@ export const ProgressScreen: React.FC = () => {
 
       {panel === 'unlock' && (
         <section className="bg-white border border-[#E4D7EE] rounded-2xl p-4 space-y-2">
-          <h2 className="font-display text-xl text-[#3E1B4A]">To Unlock</h2>
+          <h2 className="font-display text-xl text-[#3E1B4A]">Skills in Progress</h2>
           {remaining.length === 0 && <p className="text-sm text-[#5C4A68]">Nothing left at this level.</p>}
           {remaining.map((skill) => (
             <div key={skill.id} className="flex items-center justify-between gap-3 border-b border-[#F4EEF8] py-2">
@@ -99,9 +101,12 @@ export const ProgressScreen: React.FC = () => {
         <section className="space-y-2">
           <h2 className="font-display text-2xl text-[#3E1B4A]">Certificates</h2>
           {mine.map((item) => (
-            <article key={item.id} className="bg-white border border-[#E4D7EE] rounded-2xl p-4">
-              <p className="font-display text-xl text-[#3E1B4A]">Level {item.level}</p>
-              <p className="text-sm text-[#5C4A68]">{item.note}</p>
+            <article key={item.id} className="bg-white border border-[#E4D7EE] rounded-2xl p-4 flex items-center justify-between gap-3">
+              <span>
+                <span className="block font-display text-xl text-[#3E1B4A]">{item.title}</span>
+                <span className="text-sm text-[#5C4A68]">Awarded {new Date(item.awardDate).toLocaleDateString()} by {item.issuedBy}</span>
+              </span>
+              <a href={mediaUrl(`/api/uploads/${item.uploadId}`)} target="_blank" rel="noreferrer" className="text-sm text-[#5C2A6E] underline shrink-0">Open</a>
             </article>
           ))}
         </section>

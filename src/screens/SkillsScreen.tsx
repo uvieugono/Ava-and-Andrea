@@ -75,17 +75,34 @@ export const SkillsScreen: React.FC = () => {
       <section className="grid sm:grid-cols-[220px_1fr] gap-4">
         <div className="space-y-1">
           {levelSkills.length === 0 && <p className="text-sm text-[#5C4A68]">No skills are listed for this level yet.</p>}
-          {levelSkills.map((skill) => (
-            <button
-              key={skill.id}
-              type="button"
-              onClick={() => setSelectedId(skill.id)}
-              className={`flex w-full items-center justify-between gap-2 text-left px-3 py-2 rounded-xl text-sm ${selectedId === skill.id ? 'bg-[#F4EEF8] text-[#3E1B4A]' : 'text-[#241628]'}`}
-            >
-              <span>{skill.name}</span>
-              <SkillStatusBadge status={skill.status} compact />
-            </button>
-          ))}
+          {levelSkills.map((skill) => {
+            // Levels 9 and 10 show each skill's video and whether it is required.
+            const detailed = level >= 9;
+            const thumb = detailed ? matchingTutorial(skill) : null;
+            return (
+              <button
+                key={skill.id}
+                type="button"
+                onClick={() => setSelectedId(skill.id)}
+                className={`flex w-full items-center justify-between gap-2 text-left px-3 py-2 rounded-xl text-sm ${selectedId === skill.id ? 'bg-[#F4EEF8] text-[#3E1B4A]' : 'text-[#241628]'}`}
+              >
+                <span className="flex items-center gap-2">
+                  {thumb && <img src={thumb.thumbnail} alt="" className="w-16 aspect-video rounded-md object-cover shrink-0" />}
+                  <span>
+                    <span className="block">{skill.name}</span>
+                    {detailed && (
+                      <span className={`text-xs ${skill.optional ? 'text-[#5C4A68]' : 'text-[#5C2A6E] font-semibold'}`}>
+                        Level {skill.level} · {skill.optional ? 'Optional' : 'Required'}
+                      </span>
+                    )}
+                  </span>
+                </span>
+                <SkillStatusBadge status={skill.status} compact />
+              </button>
+            );
+          })}
+          {level === 9 && <p className="text-xs text-[#5C4A68] px-3 pt-2">The other skills and vaults at Level 9 are optional.</p>}
+          {level === 10 && <p className="text-xs text-[#5C4A68] px-3 pt-2">Vault is optional. Other skills at Level 10 are optional.</p>}
         </div>
         <div className="bg-white border border-[#E4D7EE] rounded-2xl p-4 min-h-48">
           {!selected && <p className="text-sm text-[#5C4A68]">Select a skill to watch how it is performed.</p>}
@@ -111,6 +128,11 @@ export const SkillsScreen: React.FC = () => {
                 </p>
               )}
               {tutorial && <p className="text-sm text-[#5C4A68]">{tutorial.title}</p>}
+              {tutorial && selected.level >= 9 && (
+                <a href={`https://www.youtube.com/watch?v=${tutorial.videoId}`} target="_blank" rel="noreferrer" className="inline-block text-sm text-[#5C2A6E] underline">
+                  Watch on YouTube
+                </a>
+              )}
               <SkillSubmit skill={selected} />
             </div>
           )}

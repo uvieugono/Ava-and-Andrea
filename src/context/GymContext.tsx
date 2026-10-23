@@ -17,7 +17,6 @@ import {
   RosterGymnast,
   CoachNote,
   PracticeFocusArea,
-  AchievementCertificate,
   RosterEvidenceSubmission,
   SkillStatus,
 } from '../types';
@@ -25,9 +24,12 @@ import { INITIAL_SKILLS, WORKOUTS, GYM_EVENTS, PRODUCTS, BADGES, COMMUNITY_POSTS
 import { INITIAL_REGISTERED_CLUBS } from '../data/gymManagementData';
 import {
   ApiUser,
+  CertificateView,
+  ClubDetails,
   ClubGymnastView,
   ClubOverview,
   CompetitionView,
+  DrillView,
   NoticeView,
   Progress,
   SkillState,
@@ -84,18 +86,25 @@ interface GymContextType {
   rosterGymnasts: RosterGymnast[];
   refreshOverview: () => Promise<void>;
   addCoachNote: (gymnastId: string, note: Omit<CoachNote, 'id' | 'date'>) => void;
-  addPracticeFocus: (gymnastId: string, focus: Omit<PracticeFocusArea, 'id' | 'assignedDate'>) => void;
-  updatePracticeFocusStatus: (gymnastId: string, focusId: string, status: PracticeFocusArea['status']) => void;
   reviewEvidenceSubmission: (gymnastId: string, submissionId: string, status: 'APPROVED' | 'NEEDS_WORK', comment: string) => Promise<ActionResult>;
   addCompetition: (input: { gymnastId: string; name: string; date: string; events: string[]; result: string; comments: string }) => Promise<ActionResult>;
   markAttendance: (gymnastId: string, date: string, present: boolean) => Promise<ActionResult>;
   sendFeeReminder: (gymnastId: string, message: string) => Promise<ActionResult>;
   publishNotice: (title: string, body: string) => Promise<ActionResult>;
+  deleteNotice: (noticeId: string) => Promise<ActionResult>;
   addDocument: (file: File) => Promise<ActionResult>;
+  updateClubDetails: (input: { coachName?: string; logo?: File | null; signature?: File | null }) => Promise<ActionResult>;
+  saveCertificate: (image: Blob, input: { gymnastId: string | null; gymnastName: string; title: string; awardDate: string; template: string }) => Promise<ActionResult & { certificate?: CertificateView }>;
+  addDrill: (input: { gymnastIds: string[]; title: string; description: string; instructions: string; attachment: File | null }) => Promise<ActionResult>;
+  addCompetitionEvent: (input: { name: string; date: string; time: string; venue: string; participants: { gymnastId: string; level: string; result: string; medal: string }[] }) => Promise<ActionResult>;
+  recordCompetitionResults: (eventId: string, results: { gymnastId: string; result: string; medal: string }[]) => Promise<ActionResult>;
   notices: NoticeView[];
   competitions: CompetitionView[];
-  certificates: AchievementCertificate[];
-  issueCertificate: (gymnastName: string, level: number, note: string) => void;
+  /** Staff: the club's certificates. Gymnast: their own. */
+  certificates: CertificateView[];
+  /** Staff: the club's practice drills. Gymnast: the drills assigned to them. */
+  drills: DrillView[];
+  clubDetails: ClubDetails | null;
   pendingSkillId: string | null;
   openSkill: (skillId: string) => void;
 
@@ -243,7 +252,8 @@ export const GymProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [extras, setExtras] = useState<Record<string, { coachNotes: CoachNote[]; practiceAreas: PracticeFocusArea[] }>>(() =>
     readJson('gymtrack_roster_extras_v1', {}),
   );
-  const [certificates, setCertificates] = useState<AchievementCertificate[]>(() => readJson('gymtrack_certificates_v1', []));
+  const [myCertificates, setMyCertificates] = useState<CertificateView[]>([]);
+  const [myDrills, setMyDrills] = useState<DrillView[]>([]);
   const [currentTab, setTab] = useState<NavigationTab>('home');
   const [pendingSkillId, setPendingSkillId] = useState<string | null>(null);
   const [activeXpToast, setActiveXpToast] = useState<XpToast | null>(null);
@@ -257,7 +267,6 @@ export const GymProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => { localStorage.setItem('gymtrack_cart', JSON.stringify(cart)); }, [cart]);
   useEffect(() => { localStorage.setItem('gymtrack_community', JSON.stringify(communityPosts)); }, [communityPosts]);
   useEffect(() => { localStorage.setItem('gymtrack_roster_extras_v1', JSON.stringify(extras)); }, [extras]);
-  useEffect(() => { localStorage.setItem('gymtrack_certificates_v1', JSON.stringify(certificates)); }, [certificates]);
 
   // ---- Skills: one source of truth. The statuses come from the club's decisions on the server. ----
   const skills = useMemo<Skill[]>(
@@ -306,6 +315,8 @@ export const GymProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       levelRef.current = next.level ?? null;
       gymApi.myCompetitions().then((result) => setCompetitions(result.competitions)).catch(() => undefined);
+      gymApi.myCertificates().then((result) => setMyCertificates(result.certificates)).catch(() => undefined);
+      gymApi.myDrills().then((result) => setMyDrills(result.drills)).catch(() => undefined);
     } else {
       setSkillStates({});
       setProgress(null);
@@ -330,6 +341,8 @@ export const GymProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setOverview(null);
     setNotices([]);
     setCompetitions([]);
+    setMyCertificates([]);
+    setMyDrills([]);
     setUser({ ...toProfile(api), xp: 0 });
     setTab(api.role === 'CLUB_ADMIN' || api.role === 'COACH' ? 'dashboard' : 'home');
     setReady(true);
@@ -344,6 +357,8 @@ export const GymProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setOverview(null);
     setNotices([]);
     setCompetitions([]);
+    setMyCertificates([]);
+    setMyDrills([]);
     setTab('home');
   }, []);
 
@@ -519,6 +534,110 @@ export const GymProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const deleteNotice: GymContextType['deleteNotice'] = async (noticeId) => {
+    try {
+      await gymApi.deleteNotice(noticeId);
+      await Promise.all([refreshOverview(), gymApi.notices().then((r) => setNotices(r.notices))]);
+      return { ok: true, message: 'Notice deleted. It no longer shows to your gymnasts.' };
+    } catch (error) {
+      const code = errorCode(error);
+      if (code === 'FORBIDDEN') return { ok: false, message: 'Only the club administrator can delete notices.' };
+      if (code === 'NOT_FOUND') return { ok: false, message: 'That notice was already deleted.' };
+      return { ok: false, message: 'The notice could not be deleted. Try again.' };
+    }
+  };
+
+  const updateClubDetails: GymContextType['updateClubDetails'] = async (input) => {
+    try {
+      const logo = input.logo ? await uploadFile(input.logo, { scope: 'private' }) : null;
+      const signature = input.signature ? await uploadFile(input.signature, { scope: 'private' }) : null;
+      await gymApi.updateClubDetails({
+        ...(input.coachName !== undefined ? { coachName: input.coachName } : {}),
+        ...(logo ? { logoUploadId: logo.id } : {}),
+        ...(signature ? { signatureUploadId: signature.id } : {}),
+      });
+      await refreshOverview();
+      return { ok: true, message: 'Club details saved. They are used on new certificates.' };
+    } catch (error) {
+      if (error instanceof UploadError) return { ok: false, message: error.message };
+      const code = errorCode(error);
+      if (code === 'FORBIDDEN') return { ok: false, message: 'Only the club administrator can change these details.' };
+      return { ok: false, message: 'The club details could not be saved. Use a PNG or JPG image and try again.' };
+    }
+  };
+
+  const saveCertificate: GymContextType['saveCertificate'] = async (image, input) => {
+    try {
+      const fileName = `${input.title} - ${input.gymnastName}.png`.replace(/[^\w.\- ]/g, '_');
+      const stored = await uploadFile(image, { scope: 'private', name: fileName });
+      const result = await gymApi.addCertificate({ ...input, uploadId: stored.id });
+      await refreshOverview();
+      return { ok: true, message: `Certificate saved for ${input.gymnastName}.`, certificate: result.certificate };
+    } catch (error) {
+      if (error instanceof UploadError) return { ok: false, message: error.message };
+      const code = errorCode(error);
+      const messages: Record<string, string> = {
+        MISSING: 'Enter the gymnast name and the certificate title.',
+        DATE: 'Enter the award date.',
+        NOT_FOUND: 'That gymnast is not in your club.',
+      };
+      return { ok: false, message: messages[code] ?? 'The certificate could not be saved. Try again.' };
+    }
+  };
+
+  const addDrill: GymContextType['addDrill'] = async (input) => {
+    try {
+      const attachment = input.attachment ? await uploadFile(input.attachment, { scope: 'private' }) : null;
+      await gymApi.addDrill({
+        gymnastIds: input.gymnastIds,
+        title: input.title,
+        description: input.description,
+        instructions: input.instructions,
+        attachmentUploadId: attachment?.id ?? null,
+      });
+      await refreshOverview();
+      const count = input.gymnastIds.length;
+      return { ok: true, message: `Drill saved. It now shows on ${count === 1 ? "the gymnast's profile" : `${count} gymnasts' profiles`}.` };
+    } catch (error) {
+      if (error instanceof UploadError) return { ok: false, message: error.message };
+      const code = errorCode(error);
+      const messages: Record<string, string> = {
+        MISSING: 'Give the drill a title.',
+        NO_GYMNASTS: 'Choose at least one gymnast.',
+        NOT_FOUND: 'One of those gymnasts is not in your club.',
+      };
+      return { ok: false, message: messages[code] ?? 'The drill could not be saved. Try again.' };
+    }
+  };
+
+  const addCompetitionEvent: GymContextType['addCompetitionEvent'] = async (input) => {
+    try {
+      await gymApi.addCompetitionEvent(input);
+      await refreshOverview();
+      return { ok: true, message: `Competition published for ${input.participants.length} gymnast${input.participants.length === 1 ? '' : 's'}.` };
+    } catch (error) {
+      const code = errorCode(error);
+      const messages: Record<string, string> = {
+        MISSING: 'Enter the event name.',
+        DATE: 'Enter the event date.',
+        NO_GYMNASTS: 'Choose at least one participating gymnast.',
+        DUPLICATE_GYMNAST: 'A gymnast is listed twice.',
+        NOT_FOUND: 'One of those gymnasts is not in your club.',
+      };
+      return { ok: false, message: messages[code] ?? 'The competition could not be saved. Try again.' };
+    }
+  };
+
+  const recordCompetitionResults: GymContextType['recordCompetitionResults'] = async (eventId, results) => {
+    try {
+      await gymApi.recordCompetitionResults(eventId, results);
+      await refreshOverview();
+      return { ok: true, message: 'Results saved to each gymnast\'s profile.' };
+    } catch {
+      return { ok: false, message: 'The results could not be saved. Try again.' };
+    }
+  };
+
   const addDocument: GymContextType['addDocument'] = async (file) => {
     try {
       const stored = await uploadFile(file, { scope: 'private' });
@@ -588,28 +707,8 @@ export const GymProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   };
 
-  const addPracticeFocus = (gymnastId: string, focus: Omit<PracticeFocusArea, 'id' | 'assignedDate'>) => {
-    const full: PracticeFocusArea = { ...focus, id: 'focus_' + Date.now(), assignedDate: 'Today' };
-    setExtras((prev) => {
-      const current = prev[gymnastId] ?? { coachNotes: [], practiceAreas: [] };
-      return { ...prev, [gymnastId]: { ...current, practiceAreas: [full, ...current.practiceAreas] } };
-    });
-  };
-
-  const updatePracticeFocusStatus = (gymnastId: string, focusId: string, status: PracticeFocusArea['status']) => {
-    setExtras((prev) => {
-      const current = prev[gymnastId];
-      if (!current) return prev;
-      return {
-        ...prev,
-        [gymnastId]: { ...current, practiceAreas: current.practiceAreas.map((item) => (item.id === focusId ? { ...item, status } : item)) },
-      };
-    });
-  };
-
-  const issueCertificate = (gymnastName: string, level: number, note: string) => {
-    setCertificates((prev) => [{ id: 'cert_' + Date.now(), gymnastName, level, note, issuedAt: new Date().toISOString() }, ...prev]);
-  };
+  const certificates = isStaff ? overview?.certificates ?? [] : myCertificates;
+  const drills = isStaff ? overview?.drills ?? [] : myDrills;
 
   const openSkill = (skillId: string) => {
     setPendingSkillId(skillId || null);
@@ -769,18 +868,23 @@ export const GymProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         rosterGymnasts,
         refreshOverview,
         addCoachNote,
-        addPracticeFocus,
-        updatePracticeFocusStatus,
         reviewEvidenceSubmission,
         addCompetition,
         markAttendance,
         sendFeeReminder,
         publishNotice,
+        deleteNotice,
         addDocument,
+        updateClubDetails,
+        saveCertificate,
+        addDrill,
+        addCompetitionEvent,
+        recordCompetitionResults,
         notices,
         competitions,
         certificates,
-        issueCertificate,
+        drills,
+        clubDetails: overview?.club ?? null,
         pendingSkillId,
         openSkill,
         submitSkillVideo,

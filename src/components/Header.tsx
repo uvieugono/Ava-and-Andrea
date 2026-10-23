@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useGym } from '../context/GymContext';
-import { Menu, X } from 'lucide-react';
+import { ChevronDown, LogOut, Menu, X } from 'lucide-react';
 import { NavigationTab } from '../types';
 import { Logo } from './Logo';
 
@@ -22,14 +22,67 @@ function isActive(current: NavigationTab, id: NavigationTab) {
 }
 
 export const Header: React.FC = () => {
-  const { user, currentTab, setCurrentTab, isStaff } = useGym();
+  const { user, currentTab, setCurrentTab, isStaff, logoutUser } = useGym();
   // The Club Dashboard is only for signed-in club accounts.
   const items = NAV.filter((item) => item.id !== 'dashboard' || isStaff);
   const [open, setOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const profileRef = useRef<HTMLDivElement>(null);
+
+  // The menu under the profile photo closes on a click elsewhere or Escape.
+  useEffect(() => {
+    if (!profileOpen) return;
+    const onClick = (event: MouseEvent) => {
+      if (!profileRef.current?.contains(event.target as Node)) setProfileOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setProfileOpen(false);
+    };
+    document.addEventListener('mousedown', onClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [profileOpen]);
 
   const go = (tab: NavigationTab) => {
     setCurrentTab(tab);
     setOpen(false);
+    setProfileOpen(false);
+  };
+
+  // Everything reachable from the profile page, plus the main pages for this account.
+  const profileMenu: { id: NavigationTab; label: string; anchor?: string; edit?: boolean }[] = [
+    { id: 'profile', label: 'My Profile' },
+    { id: 'profile', label: 'Edit Profile', edit: true },
+    ...(isStaff
+      ? [{ id: 'dashboard' as NavigationTab, label: 'Club Dashboard' }]
+      : [
+          { id: 'profile' as NavigationTab, label: 'My Videos', anchor: 'profile-videos' },
+          { id: 'profile' as NavigationTab, label: 'My Drills and Certificates', anchor: 'profile-drills' },
+          { id: 'profile' as NavigationTab, label: 'Competition History', anchor: 'profile-competitions' },
+          { id: 'progress' as NavigationTab, label: 'My Progress' },
+        ]),
+    { id: 'profile', label: 'Club Noticeboard', anchor: 'profile-notices' },
+    { id: 'clubs', label: 'Find a Club' },
+  ];
+
+  const openItem = (item: (typeof profileMenu)[number]) => {
+    go(item.id);
+    // Wait for the page to draw, then jump to the section or open the edit form.
+    window.setTimeout(() => {
+      if (item.edit) window.dispatchEvent(new Event('gymtrack:edit-profile'));
+      if (item.anchor) document.getElementById(item.anchor)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      else window.scrollTo({ top: 0 });
+    }, 120);
+  };
+
+  const logOut = () => {
+    setProfileOpen(false);
+    setOpen(false);
+    // Ends the session; the sign in / register page shows next.
+    logoutUser();
   };
 
   return (
@@ -52,15 +105,44 @@ export const Header: React.FC = () => {
             </button>
           ))}
         </nav>
-        <button
-          type="button"
-          onClick={() => go('profile')}
-          className="ml-auto flex items-center gap-2 min-h-11"
-          aria-label={`Profile for ${user.fullName}`}
-        >
-          <img src={user.avatar} alt="" className="w-9 h-9 rounded-full object-cover" />
-          <span className="hidden sm:block text-sm text-[#241628] max-w-[8rem] truncate">{user.fullName}</span>
-        </button>
+        <div ref={profileRef} className="ml-auto relative">
+          <button
+            type="button"
+            onClick={() => setProfileOpen((value) => !value)}
+            className="flex items-center gap-2 min-h-11"
+            aria-label={`Profile menu for ${user.fullName}`}
+            aria-haspopup="menu"
+            aria-expanded={profileOpen}
+          >
+            <img src={user.avatar} alt="" className="w-9 h-9 rounded-full object-cover" />
+            <span className="hidden sm:block text-sm text-[#241628] max-w-[8rem] truncate">{user.fullName}</span>
+            <ChevronDown className={`w-4 h-4 text-[#5C4A68] transition-transform ${profileOpen ? 'rotate-180' : ''}`} />
+          </button>
+          {profileOpen && (
+            <div role="menu" aria-label="Profile" className="absolute right-0 top-full mt-2 w-60 bg-white border border-[#E4D7EE] rounded-2xl shadow-lg p-2 z-50">
+              {profileMenu.map((item) => (
+                <button
+                  key={item.label}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => openItem(item)}
+                  className="block w-full text-left px-3 py-2.5 rounded-xl text-sm text-[#241628] hover:bg-[#F4EEF8]"
+                >
+                  {item.label}
+                </button>
+              ))}
+              <button
+                type="button"
+                role="menuitem"
+                onClick={logOut}
+                className="mt-1 flex w-full items-center gap-2 px-3 py-3 rounded-xl text-sm font-semibold text-white bg-[#5C2A6E] hover:bg-[#3E1B4A]"
+              >
+                <LogOut className="w-4 h-4" />
+                Log Out
+              </button>
+            </div>
+          )}
+        </div>
         <button type="button" className="lg:hidden p-2" aria-label="Open menu" onClick={() => setOpen(true)}>
           <Menu className="w-6 h-6" />
         </button>

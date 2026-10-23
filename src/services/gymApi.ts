@@ -100,6 +100,41 @@ export interface CompetitionView {
   events: string[];
   result: string;
   comments: string;
+  eventId?: string;
+  time?: string;
+  venue?: string;
+  level?: string;
+  medal?: '' | 'gold' | 'silver' | 'bronze';
+}
+
+export interface ClubDetails {
+  name: string;
+  coachName: string;
+  logoUrl: string | null;
+  signatureUrl: string | null;
+}
+
+export interface CertificateView {
+  id: string;
+  gymnastId: string | null;
+  gymnastName: string;
+  title: string;
+  awardDate: string;
+  template: string;
+  uploadId: string;
+  issuedBy: string;
+  createdAt: string;
+}
+
+export interface DrillView {
+  id: string;
+  gymnastIds: string[];
+  title: string;
+  description: string;
+  instructions: string;
+  attachmentUploadId: string | null;
+  createdBy: string;
+  createdAt: string;
 }
 
 export interface NoticeView {
@@ -129,6 +164,9 @@ export interface ClubGymnastView {
 
 export interface ClubOverview {
   gymnasts: ClubGymnastView[];
+  club: ClubDetails;
+  certificates: CertificateView[];
+  drills: DrillView[];
   notices: NoticeView[];
   documents: { id: string; name: string; uploadId: string; uploadedAt: string }[];
   attendance: { id: string; gymnastId: string; date: string; present: boolean }[];
@@ -180,7 +218,7 @@ export const gymApi = {
   login: (email: string, password: string) =>
     request<{ token: string; user: ApiUser; payment: PaymentInstructions | null }>('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
   me: () => request<{ user: ApiUser; payment: PaymentInstructions | null }>('/api/me'),
-  addStudents: (students: { name: string; email: string; password: string; dateOfBirth: string; level?: number }[]) =>
+  addStudents: (students: { name: string; email: string; password: string; dateOfBirth: string; level?: number; phone?: string }[]) =>
     request<{ payment: PaymentInstructions; devMatch: boolean }>('/api/clubs/students', { method: 'POST', body: JSON.stringify({ students }) }),
   devMatch: (reference: string, amount: number) =>
     request('/api/payments/dev-match', { method: 'POST', body: JSON.stringify({ reference, amount }) }),
@@ -199,6 +237,9 @@ export const gymApi = {
     request(`/api/inspo/${id}/comments`, { method: 'POST', body: JSON.stringify({ text, parentCommentId }) }),
   save: (id: string) => request(`/api/inspo/${id}/save`, { method: 'POST' }),
   saved: () => request<{ posts: InspoPost[] }>('/api/inspo/saved'),
+  liked: () => request<{ posts: InspoPost[] }>('/api/inspo/liked'),
+  myVideos: () => request<{ posts: InspoPost[] }>('/api/inspo/mine'),
+  deleteInspo: (id: string) => request<{ ok: boolean }>(`/api/inspo/${id}`, { method: 'DELETE' }),
   follow: (userId: string) => request('/api/follows', { method: 'POST', body: JSON.stringify({ userId }) }),
   followClub: (clubId: string) => request('/api/follows', { method: 'POST', body: JSON.stringify({ clubId }) }),
   reportComment: (id: string) => request(`/api/comments/${id}/report`, { method: 'POST' }),
@@ -236,6 +277,19 @@ export const gymApi = {
       method: 'POST',
       body: JSON.stringify({ gymnastId, message }),
     }),
+  deleteNotice: (id: string) => request<{ ok: boolean }>(`/api/club/notices/${id}`, { method: 'DELETE' }),
+  updateClubDetails: (input: { coachName?: string; logoUploadId?: string | null; signatureUploadId?: string | null }) =>
+    request<{ club: ClubDetails }>('/api/club/details', { method: 'PATCH', body: JSON.stringify(input) }),
+  addCertificate: (input: { gymnastId: string | null; gymnastName: string; title: string; awardDate: string; template: string; uploadId: string }) =>
+    request<{ certificate: CertificateView }>('/api/club/certificates', { method: 'POST', body: JSON.stringify(input) }),
+  myCertificates: () => request<{ certificates: CertificateView[] }>('/api/certificates'),
+  addDrill: (input: { gymnastIds: string[]; title: string; description: string; instructions: string; attachmentUploadId: string | null }) =>
+    request<{ drill: DrillView }>('/api/club/drills', { method: 'POST', body: JSON.stringify(input) }),
+  myDrills: () => request<{ drills: DrillView[] }>('/api/drills'),
+  addCompetitionEvent: (input: { name: string; date: string; time: string; venue: string; participants: { gymnastId: string; level: string; result: string; medal: string }[] }) =>
+    request<{ competitions: CompetitionView[] }>('/api/club/competition-events', { method: 'POST', body: JSON.stringify(input) }),
+  recordCompetitionResults: (eventId: string, results: { gymnastId: string; result: string; medal: string }[]) =>
+    request<{ competitions: CompetitionView[] }>(`/api/club/competition-events/${eventId}/results`, { method: 'POST', body: JSON.stringify({ results }) }),
   contact: (input: { name: string; phone: string; message: string }) =>
     request<{ ok: boolean }>('/api/contact', { method: 'POST', body: JSON.stringify(input) }),
 };
@@ -271,23 +325,37 @@ const UPLOAD_MESSAGES: Record<string, string> = {
 };
 
 /** Sends a file to the server. Resolves with its stored address only once the server has saved it. */
-export async function uploadFile(file: File, options: { scope?: 'public' | 'private' } = {}): Promise<{ id: string; url: string }> {
+export async function uploadFile(
+  file: File | Blob,
+  options: { scope?: 'public' | 'private'; name?: string; onProgress?: (percent: number) => void } = {},
+): Promise<{ id: string; url: string }> {
   if (file.size === 0) throw new UploadError('EMPTY_FILE', UPLOAD_MESSAGES.EMPTY_FILE);
   if (file.size > MAX_VIDEO_MB * 1024 * 1024) throw new UploadError('FILE_TOO_LARGE', UPLOAD_MESSAGES.FILE_TOO_LARGE);
   const token = getToken();
-  let response: Response;
-  try {
-    response = await fetch(`/api/uploads?scope=${options.scope ?? 'private'}&name=${encodeURIComponent(file.name)}`, {
-      method: 'POST',
-      headers: { 'content-type': file.type || 'application/octet-stream', ...(token ? { authorization: `Bearer ${token}` } : {}) },
-      body: file,
-    });
-  } catch {
-    throw new UploadError('NETWORK', 'Could not reach GymTrack. Check your connection and try again.');
-  }
-  const body = (await response.json().catch(() => ({}))) as { id?: string; url?: string; code?: string };
-  if (!response.ok || !body.url || !body.id) {
-    const code = body.code || (response.status === 413 ? 'FILE_TOO_LARGE' : 'ERROR');
+  const name = options.name ?? (file instanceof File ? file.name : 'upload');
+  // XMLHttpRequest, not fetch, so the page can show how much has been sent.
+  const { status, body } = await new Promise<{ status: number; body: { id?: string; url?: string; code?: string } }>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `/api/uploads?scope=${options.scope ?? 'private'}&name=${encodeURIComponent(name)}`);
+    xhr.setRequestHeader('content-type', file.type || 'application/octet-stream');
+    if (token) xhr.setRequestHeader('authorization', `Bearer ${token}`);
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) options.onProgress?.(Math.round((event.loaded / event.total) * 100));
+    };
+    xhr.onload = () => {
+      let parsed = {};
+      try {
+        parsed = JSON.parse(xhr.responseText || '{}');
+      } catch {
+        parsed = {};
+      }
+      resolve({ status: xhr.status, body: parsed });
+    };
+    xhr.onerror = () => reject(new UploadError('NETWORK', 'Could not reach GymTrack. Check your connection and try again.'));
+    xhr.send(file);
+  });
+  if (status < 200 || status >= 300 || !body.url || !body.id) {
+    const code = body.code || (status === 413 ? 'FILE_TOO_LARGE' : 'ERROR');
     throw new UploadError(code, UPLOAD_MESSAGES[code] ?? 'The upload failed. Try again.');
   }
   return { id: body.id, url: body.url };
@@ -311,5 +379,8 @@ export interface InspoPost {
   saved: boolean;
   hashtags: string[];
   visibility: string;
+  audienceClubName?: string | null;
+  mine?: boolean;
+  createdAt?: string;
   comments: { id: string; text: string; authorName: string }[];
 }

@@ -26,6 +26,15 @@ export const REMOVED_SKILL_IDS = new Set([
   'gap_l8_ub_01',
   'gap_l8_bb_01',
   'gap_l8_vt_01',
+  // Levels 9 and 10: replaced by the skills in the 20 October 2026 brief
+  'gap_dia_ub_01',
+  'gap_dia_bb_01',
+  'gap_dia_vt_01',
+  'gap_dia_fx_01',
+  'gap_l10_ub_01',
+  'gap_l10_bb_01',
+  'gap_l10_vt_01',
+  'gap_l10_fx_01',
 ]);
 
 // id -> new name, and the demonstration video for it.
@@ -33,6 +42,9 @@ export const SKILL_UPDATES: Record<string, { name?: string; videoId?: string }> 
   gf_pre_fl_04: { videoId: 'otoDVplyg9w' },
   gf_l1_slv_03: { videoId: 'zrdHn1ALJFk' },
   gf_l1_slv_04: { videoId: '1NSjxa9gLAA' },
+  // 20 October 2026 brief: the two Level 1 skills that showed "demonstration unavailable"
+  gap_l1_ub_01: { videoId: 'SBYwvNCRP0g' },
+  gap_l1_bb_02: { videoId: 'zPDHpxPTuH4' },
 
   gf_l2_slv_04: { name: 'Bridge with one leg raised up', videoId: 'WCk6YQDIzWU' },
   gf_l2_gld_01: { name: 'Handstand bridge stand up', videoId: 'hx-X_bgNpTc' },
@@ -75,7 +87,15 @@ export const SKILL_UPDATES: Record<string, { name?: string; videoId?: string }> 
 
 // Skills the brief lists that the base curriculum did not have as separate
 // entries. `like` is a skill whose fields are copied.
-export const ADDED_SKILLS: { id: string; like: string; level: number; name: string; videoId: string }[] = [
+export const ADDED_SKILLS: {
+  id: string;
+  like: string;
+  level: number;
+  name: string;
+  videoId: string;
+  category?: Skill['category'];
+  optional?: boolean;
+}[] = [
   { id: 'brief_l3_straight_jump', like: 'gf_l3_slv_02', level: 3, name: 'Straight jump', videoId: '1NSjxa9gLAA' },
   { id: 'brief_l3_back_handspring', like: 'gf_l3_gld_02', level: 3, name: 'Back handspring', videoId: '8cj3aL631m8' },
   { id: 'brief_l5_sidesplit', like: 'gf_l5_gld_06', level: 5, name: 'Sidesplit', videoId: 'vt_-vhofqJE' },
@@ -86,11 +106,16 @@ export const ADDED_SKILLS: { id: string; like: string; level: number; name: stri
   { id: 'brief_l7_half_twist', like: 'gf_l7_plt_01', level: 7, name: 'Half twist', videoId: 'dvp0qZGRdtQ' },
   { id: 'brief_l7_switch_leap', like: 'gf_l7_plt_01', level: 7, name: 'Switch leap', videoId: 'Qd2-Rk5cSA4' },
   { id: 'brief_l8_yurchenko', like: 'gf_l8_vt_01', level: 8, name: 'Yurchenko', videoId: 'HFoYgPUoZG4' },
+  // 20 October 2026 brief: Levels 9 and 10
+  { id: 'brief_l9_double_twist', like: 'gf_l7_plt_01', level: 9, name: 'Double twist', videoId: 'hpsgwGvBdW8', category: 'FLOOR' },
+  { id: 'brief_l9_fhs_front_full', like: 'gf_l7_plt_01', level: 9, name: 'Front handspring front full', videoId: 'zF59uGgs54Y', category: 'FLOOR' },
+  { id: 'brief_l9_tsukahara_pike', like: 'gf_l8_vt_01', level: 9, name: 'Tsukahara pike (vault)', videoId: 'Rv5xwDTPACc', category: 'VAULT', optional: true },
+  { id: 'brief_l10_double_back', like: 'gf_l7_plt_01', level: 10, name: 'Double back', videoId: 'TxmbF-ULIoY', category: 'FLOOR' },
 ];
 
 // Levels with no standard requirements: nothing is compulsory, so these levels
 // never advance a gymnast automatically.
-export const OPTIONAL_LEVELS = [8, 9, 10];
+export const OPTIONAL_LEVELS = [8];
 export const OPTIONAL_LEVEL_NOTE = 'The routine is optional. There are no standard requirements.';
 
 function tutorialFor(name: string, videoId: string) {
@@ -131,6 +156,8 @@ export function applyCurriculumUpdates(base: Skill[]): Skill[] {
       id: add.id,
       name: add.name,
       level: add.level as Skill['level'],
+      category: add.category ?? like.category,
+      optional: add.optional,
       description: `Level ${add.level}: ${add.name}.`,
       writtenTutorial: undefined,
       officialRef: undefined,

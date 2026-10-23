@@ -1,7 +1,10 @@
 import React, { useState } from 'react';
 import { useGym } from '../context/GymContext';
 import { ClubOffice } from '../components/ClubOffice';
-import { RosterGymnast, CoachNote, PracticeFocusArea } from '../types';
+import { AddStudentsPanel } from '../components/AddStudentsPanel';
+import { ClubCompetitions, ClubDrills, DrillDialog, medalLabel } from '../components/ClubPrograms';
+import { RosterGymnast, CoachNote } from '../types';
+import { mediaUrl } from '../services/gymApi';
 import { 
   Building2, 
   Users, 
@@ -39,11 +42,11 @@ export const GymDashboardScreen: React.FC = () => {
     rosterGymnasts,
     addCompetition,
     addCoachNote,
-    addPracticeFocus,
-    updatePracticeFocusStatus,
     reviewEvidenceSubmission,
     userRole,
+    drills,
   } = useGym();
+  const [addingGymnast, setAddingGymnast] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [levelFilter, setLevelFilter] = useState<number | 'ALL'>('ALL');
@@ -72,12 +75,6 @@ export const GymDashboardScreen: React.FC = () => {
   const [noteCategory, setNoteCategory] = useState<CoachNote['category']>('Form & Execution');
   const [noteText, setNoteText] = useState('');
 
-  // New Practice Drill Form
-  const [practiceApparatus, setPracticeApparatus] = useState<PracticeFocusArea['apparatus']>('VAULT');
-  const [practiceTitle, setPracticeTitle] = useState('');
-  const [practiceDescription, setPracticeDescription] = useState('');
-  const [practicePriority, setPracticePriority] = useState<PracticeFocusArea['priority']>('HIGH');
-
   // Skill video reviews: a comment is kept per submission
   const [reviewDrafts, setReviewDrafts] = useState<Record<string, string>>({});
   const [reviewBusyId, setReviewBusyId] = useState<string | null>(null);
@@ -103,8 +100,7 @@ export const GymDashboardScreen: React.FC = () => {
     }
 
     if (statusFilter === 'NEEDING_PRACTICE') {
-      const hasPractice = gymnast.practiceAreas.some((p) => p.status === 'IN_PROGRESS');
-      if (!hasPractice) return false;
+      if (!drills.some((drill) => drill.gymnastIds.includes(gymnast.id))) return false;
     }
 
     return true;
@@ -116,11 +112,19 @@ export const GymDashboardScreen: React.FC = () => {
     (acc, g) => acc + g.evidenceSubmissions.filter((s) => s.status === 'AWAITING_REVIEW').length,
     0,
   );
-  const activePracticeCount = rosterGymnasts.reduce(
-    (acc, g) => acc + g.practiceAreas.filter((p) => p.status === 'IN_PROGRESS').length,
-    0,
-  );
-  const competitionsCount = rosterGymnasts.reduce((acc, g) => acc + (g.competitions?.length ?? 0), 0);
+  const activePracticeCount = drills.length;
+  // Count events, not one record per gymnast.
+  const competitionsCount = new Set(rosterGymnasts.flatMap((g) => (g.competitions ?? []).map((c) => c.eventId ?? c.id))).size;
+  const gymnastDrills = activeGymnast ? drills.filter((drill) => drill.gymnastIds.includes(activeGymnast.id)) : [];
+
+  // The overview cards open the part of the dashboard they describe.
+  const jumpTo = (id: string) => window.setTimeout(() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+  const openRoster = (filter: 'ALL' | 'PENDING_REVIEW') => {
+    setSearchQuery('');
+    setLevelFilter('ALL');
+    setStatusFilter(filter);
+    jumpTo('club-roster');
+  };
 
   const toggleCompEvent = (name: string) => {
     setCompEvents((prev) => (prev.includes(name) ? prev.filter((item) => item !== name) : [...prev, name]));
@@ -173,24 +177,6 @@ export const GymDashboardScreen: React.FC = () => {
 
     setShowAddNoteModal(false);
     setNoteText('');
-  };
-
-  // Handle Save Practice Focus
-  const handleSavePractice = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!activeGymnast || !practiceTitle.trim()) return;
-
-    addPracticeFocus(activeGymnast.id, {
-      apparatus: practiceApparatus,
-      title: practiceTitle.trim(),
-      description: practiceDescription.trim() || 'Focus on routine precision and landing freeze.',
-      priority: practicePriority,
-      status: 'IN_PROGRESS',
-    });
-
-    setShowAddPracticeModal(false);
-    setPracticeTitle('');
-    setPracticeDescription('');
   };
 
   // Approve or reject a skill video. A comment is required for both.
@@ -286,8 +272,7 @@ export const GymDashboardScreen: React.FC = () => {
 
   return (
     <div className="flex flex-col w-full max-w-5xl mx-auto px-4 sm:px-6 space-y-6 pt-2 pb-16">
-      <ClubOffice />
-      {/* 1. CLUB & COACH DASHBOARD HEADER */}
+      {/* 1. CLUB & GYMNAST PROFILE: always first, with Add a Gymnast inside */}
       <section className="bg-white rounded-3xl p-6 sm:p-7 border border-[#E4D7EE] shadow-xs relative overflow-hidden space-y-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3.5">
@@ -307,11 +292,12 @@ export const GymDashboardScreen: React.FC = () => {
             <div className="flex items-center gap-2 flex-wrap">
               <button
                 id="btn-open-add-gymnast"
-                onClick={() => document.getElementById('add-student-panel')?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
+                aria-expanded={addingGymnast}
+                onClick={() => setAddingGymnast((value) => !value)}
                 className="py-2.5 px-4 rounded-full bg-gradient-to-r from-[#5C2A6E] to-[#3E1B4A] hover:opacity-95 text-white text-xs font-black shadow-md shadow-[#5C2A6E]/25 flex items-center gap-1.5 active:scale-98 transition-all"
               >
                 <Plus className="w-4 h-4" />
-                <span>Add Gymnast</span>
+                <span>{addingGymnast ? 'Close' : 'Add a Gymnast'}</span>
               </button>
             </div>
           )}
@@ -319,7 +305,7 @@ export const GymDashboardScreen: React.FC = () => {
 
         {/* 4 Overview Statistics Cards */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
-          <div className="p-3.5 rounded-2xl bg-[#F4EEF8] border border-[#E4D7EE] flex flex-col justify-between">
+          <button type="button" onClick={() => openRoster('ALL')} className="p-3.5 rounded-2xl bg-[#F4EEF8] border border-[#E4D7EE] flex flex-col justify-between text-left hover:border-[#5C2A6E] focus:outline-none focus:ring-2 focus:ring-[#5C2A6E] transition-colors">
             <span className="text-[10px] font-black uppercase text-[#3E1B4A] tracking-wider">
               Club Roster
             </span>
@@ -327,10 +313,10 @@ export const GymDashboardScreen: React.FC = () => {
               <span className="text-2xl font-black text-[#241628]">{totalGymnasts}</span>
               <span className="text-xs text-[#5C4A68]">Athletes</span>
             </div>
-            <span className="text-[10px] text-[#5C4A68] mt-0.5">Added by you or chose your club</span>
-          </div>
+            <span className="text-[10px] text-[#5C4A68] mt-0.5">Added by you or chose your club. Open the roster</span>
+          </button>
 
-          <div className="p-3.5 rounded-2xl bg-[#F4EEF8] border border-[#E4D7EE] flex flex-col justify-between">
+          <button type="button" onClick={() => openRoster('PENDING_REVIEW')} className="p-3.5 rounded-2xl bg-[#F4EEF8] border border-[#E4D7EE] flex flex-col justify-between text-left hover:border-[#5C2A6E] focus:outline-none focus:ring-2 focus:ring-[#5C2A6E] transition-colors">
             <span className="text-[10px] font-black uppercase text-[#3E1B4A] tracking-wider">
               Evidence Reviews
             </span>
@@ -338,10 +324,10 @@ export const GymDashboardScreen: React.FC = () => {
               <span className="text-2xl font-black text-[#3E1B4A]">{pendingSubmissionsCount}</span>
               <span className="text-xs text-[#3E1B4A]">Pending</span>
             </div>
-            <span className="text-[10px] text-[#3E1B4A]">Videos to verify</span>
-          </div>
+            <span className="text-[10px] text-[#3E1B4A]">Videos to approve or reject</span>
+          </button>
 
-          <div className="p-3.5 rounded-2xl bg-[#f0fdf4] border border-emerald-200 flex flex-col justify-between">
+          <button type="button" onClick={() => jumpTo('practice-drills')} className="p-3.5 rounded-2xl bg-[#f0fdf4] border border-emerald-200 flex flex-col justify-between text-left hover:border-[#5C2A6E] focus:outline-none focus:ring-2 focus:ring-[#5C2A6E] transition-colors">
             <span className="text-[10px] font-black uppercase text-emerald-800 tracking-wider">
               Practice Drills
             </span>
@@ -349,10 +335,10 @@ export const GymDashboardScreen: React.FC = () => {
               <span className="text-2xl font-black text-emerald-700">{activePracticeCount}</span>
               <span className="text-xs text-emerald-700">Active</span>
             </div>
-            <span className="text-[10px] text-emerald-700">Areas under practice</span>
-          </div>
+            <span className="text-[10px] text-emerald-700">Drills uploaded to profiles</span>
+          </button>
 
-          <div className="p-3.5 rounded-2xl bg-[#F4EEF8] border border-[#E4D7EE] flex flex-col justify-between">
+          <button type="button" onClick={() => jumpTo('competitions')} className="p-3.5 rounded-2xl bg-[#F4EEF8] border border-[#E4D7EE] flex flex-col justify-between text-left hover:border-[#5C2A6E] focus:outline-none focus:ring-2 focus:ring-[#5C2A6E] transition-colors">
             <span className="text-[10px] font-black uppercase text-[#3E1B4A] tracking-wider">
               Competitions
             </span>
@@ -360,10 +346,16 @@ export const GymDashboardScreen: React.FC = () => {
               <span className="text-2xl font-black text-[#3E1B4A]">{competitionsCount}</span>
               <span className="text-xs text-[#5C4A68]">Recorded</span>
             </div>
-            <span className="text-[10px] text-[#5C4A68]">Across your gymnasts</span>
-          </div>
+            <span className="text-[10px] text-[#5C4A68]">Events and results</span>
+          </button>
         </div>
+
+        {userRole === 'CLUB_ADMIN' && addingGymnast && <AddStudentsPanel />}
       </section>
+
+      <ClubOffice />
+      <ClubDrills />
+      <ClubCompetitions />
 
       {/* 2. ROSTER SEARCH & LEVEL FILTERS */}
       <div className="space-y-3">
@@ -434,7 +426,7 @@ export const GymDashboardScreen: React.FC = () => {
       </div>
 
       {/* 3. ROSTER GYMNAST CARDS GRID */}
-      <section className="space-y-4">
+      <section id="club-roster" className="space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-black text-[#241628] tracking-tight">
             Gymnast Roster & Athlete Profiles ({filteredRoster.length})
@@ -631,7 +623,7 @@ export const GymDashboardScreen: React.FC = () => {
                     activeGymnastTab === 'PRACTICE' ? 'bg-[#5C2A6E] text-white shadow-xs font-black' : 'text-[#5C4A68] hover:text-[#241628]'
                   }`}
                 >
-                  Areas for Practice ({activeGymnast.practiceAreas.length})
+                  Practice Drills ({gymnastDrills.length})
                 </button>
                 <button
                   onClick={() => setActiveGymnastTab('NOTES')}
@@ -674,8 +666,10 @@ export const GymDashboardScreen: React.FC = () => {
                         <div key={comp.id} className="p-4 rounded-2xl bg-white border border-[#E4D7EE] shadow-xs space-y-1.5">
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <h5 className="text-sm font-black text-[#241628]">{comp.name}</h5>
-                            <span className="text-[11px] text-[#5C4A68]">{comp.date}</span>
+                            <span className="text-[11px] text-[#5C4A68]">{comp.date}{comp.time ? ` · ${comp.time}` : ''}{comp.venue ? ` · ${comp.venue}` : ''}</span>
                           </div>
+                          {comp.level && <p className="text-xs text-[#5C4A68]">Level: {comp.level}</p>}
+                          {comp.medal && <p className="text-xs text-[#241628]"><strong>Medal:</strong> {medalLabel(comp.medal)}</p>}
                           {comp.events.length > 0 && <p className="text-xs text-[#5C4A68]">Events: {comp.events.join(', ')}</p>}
                           {comp.result && <p className="text-xs text-[#241628]"><strong>Result:</strong> {comp.result}</p>}
                           {comp.comments && <p className="text-[11px] text-[#5C4A68] italic">{comp.comments}</p>}
@@ -721,79 +715,38 @@ export const GymDashboardScreen: React.FC = () => {
                 </div>
               )}
 
-              {/* TAB 4: AREAS NEEDING PRACTICE & ASSIGNED DRILLS */}
+              {/* TAB 4: PRACTICE DRILLS ASSIGNED TO THIS GYMNAST */}
               {activeGymnastTab === 'PRACTICE' && (
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-3">
                     <div>
-                      <h4 className="text-base font-black text-[#241628]">
-                        Identified Practice Areas & Custom Drills
-                      </h4>
-                      <p className="text-xs text-[#5C4A68]">
-                        Assign apparatus drills to fix execution deductions before the next meet. Kept on this device.
-                      </p>
+                      <h4 className="text-base font-black text-[#241628]">Practice drills</h4>
+                      <p className="text-xs text-[#5C4A68]">Drills assigned to {activeGymnast.name}. They show on the gymnast's profile.</p>
                     </div>
-
                     <button
                       id="btn-assign-practice-drill"
                       onClick={() => setShowAddPracticeModal(true)}
-                      className="py-2 px-3.5 rounded-full bg-[#F4EEF8] hover:bg-[#E4D7EE] border border-[#E4D7EE] text-[#3E1B4A] text-xs font-black shadow-xs flex items-center gap-1.5 transition-all"
+                      className="py-2 px-3.5 rounded-full bg-[#F4EEF8] hover:bg-[#E4D7EE] border border-[#E4D7EE] text-[#3E1B4A] text-xs font-black shadow-xs flex items-center gap-1.5 transition-all shrink-0"
                     >
                       <Plus className="w-3.5 h-3.5" />
                       <span>Assign Practice Drill</span>
                     </button>
                   </div>
-
-                  {activeGymnast.practiceAreas.length === 0 ? (
+                  {gymnastDrills.length === 0 ? (
                     <div className="p-6 text-center bg-[#F4EEF8] rounded-2xl border border-[#E4D7EE] text-xs text-[#5C4A68]">
-                      No active practice drills assigned. Tap above to assign a targeted drill.
+                      No drills assigned yet.
                     </div>
                   ) : (
                     <div className="space-y-2.5">
-                      {activeGymnast.practiceAreas.map((focus) => (
-                        <div
-                          key={focus.id}
-                          className="p-3.5 rounded-2xl bg-white border border-[#E4D7EE] shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-                        >
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-2">
-                              <span className="px-2 py-0.2 rounded-md bg-[#F4EEF8] text-[#3E1B4A] font-black text-[10px] uppercase">
-                                {focus.apparatus}
-                              </span>
-                              <h5 className="text-xs font-black text-[#241628]">
-                                {focus.title}
-                              </h5>
-                              <span
-                                className={`px-2 py-0.2 rounded-full text-[9px] font-black uppercase ${
-                                  focus.priority === 'HIGH'
-                                    ? 'bg-rose-50 text-rose-700 border border-rose-200'
-                                    : 'bg-amber-50 text-amber-800 border border-amber-200'
-                                }`}
-                              >
-                                {focus.priority} Priority
-                              </span>
-                            </div>
-                            <p className="text-xs text-[#5C4A68] leading-relaxed">
-                              {focus.description}
-                            </p>
-                          </div>
-
-                          {/* Status toggle buttons */}
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            {(['IN_PROGRESS', 'IMPROVED', 'MASTERED'] as const).map((st) => (
-                              <button
-                                key={st}
-                                onClick={() => updatePracticeFocusStatus(activeGymnast.id, focus.id, st)}
-                                className={`py-1 px-2.5 rounded-lg text-[10px] font-bold transition-all border ${
-                                  focus.status === st
-                                    ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
-                                    : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
-                                }`}
-                              >
-                                {st === 'IN_PROGRESS' ? 'In Progress' : st === 'IMPROVED' ? 'Improved' : 'Mastered ✓'}
-                              </button>
-                            ))}
-                          </div>
+                      {gymnastDrills.map((drill) => (
+                        <div key={drill.id} className="p-3.5 rounded-2xl bg-white border border-[#E4D7EE] shadow-xs space-y-1 text-xs">
+                          <h5 className="font-black text-[#241628]">{drill.title}</h5>
+                          {drill.description && <p className="text-[#5C4A68]">{drill.description}</p>}
+                          {drill.instructions && <p className="text-[#241628] whitespace-pre-line">{drill.instructions}</p>}
+                          {drill.attachmentUploadId && (
+                            <a href={mediaUrl(`/api/uploads/${drill.attachmentUploadId}`)} target="_blank" rel="noreferrer" className="text-[#5C2A6E] underline">Open attachment</a>
+                          )}
+                          <p className="text-[10px] text-[#5C4A68]">{new Date(drill.createdAt).toLocaleDateString()} · {drill.createdBy}</p>
                         </div>
                       ))}
                     </div>
@@ -963,100 +916,7 @@ export const GymDashboardScreen: React.FC = () => {
 
       {/* 6. MODAL: ASSIGN PRACTICE DRILL */}
       {showAddPracticeModal && activeGymnast && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center bg-[#241628]/65 backdrop-blur-xs p-4">
-          <div className="w-full max-w-md bg-white rounded-3xl p-6 shadow-2xl border border-[#E4D7EE] space-y-4 animate-in fade-in">
-            <div className="flex items-center justify-between border-b border-[#E4D7EE] pb-3">
-              <div>
-                <h4 className="text-base font-black text-[#241628]">Assign Practice Drill</h4>
-                <p className="text-xs text-[#5C4A68]">Targeted correction for {activeGymnast.name}</p>
-              </div>
-              <button onClick={() => setShowAddPracticeModal(false)} className="text-gray-400 hover:text-gray-600">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSavePractice} className="space-y-3.5">
-              <div>
-                <label className="text-xs font-bold text-[#241628] block mb-1">Target Apparatus</label>
-                <div className="grid grid-cols-4 gap-2">
-                  {(['VAULT', 'BARS', 'BEAM', 'FLOOR'] as const).map((app) => (
-                    <button
-                      key={app}
-                      type="button"
-                      onClick={() => setPracticeApparatus(app)}
-                      className={`py-2 rounded-xl text-xs font-bold transition-all border ${
-                        practiceApparatus === app
-                          ? 'bg-[#5C2A6E] text-white border-[#5C2A6E] shadow-xs'
-                          : 'bg-white text-[#5C4A68] border-[#E4D7EE]'
-                      }`}
-                    >
-                      {app}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-[#241628] block mb-1">Drill / Focus Title *</label>
-                <input
-                  type="text"
-                  required
-                  value={practiceTitle}
-                  onChange={(e) => setPracticeTitle(e.target.value)}
-                  placeholder="e.g. Uneven Bars Cast to Handstand"
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-[#E4D7EE] text-xs font-semibold focus:ring-2 focus:ring-[#5C2A6E] focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-[#241628] block mb-1">Correction Instructions & Notes</label>
-                <textarea
-                  rows={2}
-                  value={practiceDescription}
-                  onChange={(e) => setPracticeDescription(e.target.value)}
-                  placeholder="Keep arms locked, push toes back, freeze 2 seconds at top vertical."
-                  className="w-full px-3 py-2 rounded-xl border border-[#E4D7EE] text-xs font-medium focus:ring-2 focus:ring-[#5C2A6E] focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-[#241628] block mb-1">Priority Level</label>
-                <div className="grid grid-cols-3 gap-2">
-                  {(['HIGH', 'MEDIUM', 'REFINEMENT'] as const).map((pr) => (
-                    <button
-                      key={pr}
-                      type="button"
-                      onClick={() => setPracticePriority(pr)}
-                      className={`py-2 rounded-xl text-xs font-bold transition-all border ${
-                        practicePriority === pr
-                          ? 'bg-[#F4EEF8] text-[#3E1B4A] border-[#E4D7EE] ring-2 ring-amber-200'
-                          : 'bg-white text-[#5C4A68] border-[#E4D7EE]'
-                      }`}
-                    >
-                      {pr}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="pt-2 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setShowAddPracticeModal(false)}
-                  className="py-2 px-4 rounded-full text-xs font-bold text-[#5C4A68]"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="py-2.5 px-5 rounded-full bg-[#5C2A6E] hover:bg-[#3E1B4A] text-white text-xs font-black shadow-md shadow-[#5C2A6E]/25"
-                >
-                  Assign Drill
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+        <DrillDialog gymnastId={activeGymnast.id} gymnastName={activeGymnast.name} onClose={() => setShowAddPracticeModal(false)} />
       )}
 
       {/* 7. MODAL: ADD COACH NOTE */}
