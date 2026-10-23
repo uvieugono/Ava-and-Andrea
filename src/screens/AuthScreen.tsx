@@ -4,11 +4,15 @@ import { ApiUser, gymApi, setAccess, setToken } from '../services/gymApi';
 import { USAGLevel } from '../types';
 import { Logo } from '../components/Logo';
 import { Sparkles } from 'lucide-react';
+import { PasswordInput } from '../components/PasswordInput';
+import { PageSketch } from '../components/GymnastSketch';
 
 type Who = 'student' | 'club';
 type Action = 'register' | 'signin';
 
-const FIELD = 'w-full rounded-2xl border border-[#fce7f3] px-3 py-2 text-sm';
+const FIELD = 'w-full rounded-2xl border border-[#E4D7EE] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#5C2A6E]';
+const CHOICE_ON = 'bg-[#5C2A6E] text-white border-[#5C2A6E]';
+const CHOICE_OFF = 'bg-white text-[#5C4A68] border-[#E4D7EE]';
 
 export const AuthScreen: React.FC = () => {
   const { loginFromServer } = useGym();
@@ -108,39 +112,43 @@ export const AuthScreen: React.FC = () => {
       : 'Already registered? Sign in to continue.';
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#fff0f5] via-[#fffdf0] to-[#fef9c3] flex flex-col items-center justify-center p-4">
-      <div className="w-full max-w-md bg-white/95 rounded-3xl p-6 border border-[#fce7f3] space-y-4">
+    <div className="min-h-screen bg-[#F7F4FB] flex flex-col items-center justify-center p-4">
+      <div className="w-full max-w-md bg-white/95 rounded-3xl p-6 border border-[#E4D7EE] space-y-4">
         <div className="text-center flex flex-col items-center">
           <Logo size="lg" />
-          <p className="inline-flex items-center gap-1 text-[11px] font-bold text-[#854d0e] bg-[#fef9c3] border border-[#fef08a] rounded-full px-3 py-1 mt-2">
-            <Sparkles className="w-3.5 h-3.5 text-[#db2777]" /> Train. Improve. Level Up.
+          <p className="inline-flex items-center gap-1 text-[11px] font-bold text-[#3E1B4A] bg-[#F4EEF8] border border-[#E4D7EE] rounded-full px-3 py-1 mt-2">
+            <Sparkles className="w-3.5 h-3.5 text-[#5C2A6E]" /> Train. Improve. Level Up.
           </p>
         </div>
 
-        <div className="space-y-2">
-          <p className="text-[11px] font-bold uppercase tracking-wide text-[#6b555c]">New to GymTrack? Register</p>
+        <div className="space-y-6">
+          <div className="space-y-2">
+          <p className="text-[11px] font-bold uppercase tracking-wide text-[#5C4A68]">New to GymTrack? Register</p>
           <div className="grid grid-cols-2 gap-2">
-            <button type="button" onClick={() => choose('student', 'register')} className={`py-2 rounded-full text-xs font-bold border ${who === 'student' && action === 'register' ? 'bg-[#ec4899] text-white border-[#ec4899]' : 'bg-white text-[#6b555c] border-[#fce7f3]'}`}>
+            <button type="button" onClick={() => choose('student', 'register')} className={`py-2 rounded-full text-xs font-bold border ${who === 'student' && action === 'register' ? CHOICE_ON : CHOICE_OFF}`}>
               Register as a student
             </button>
-            <button type="button" onClick={() => choose('club', 'register')} className={`py-2 rounded-full text-xs font-bold border ${who === 'club' && action === 'register' ? 'bg-[#ec4899] text-white border-[#ec4899]' : 'bg-white text-[#6b555c] border-[#fce7f3]'}`}>
+            <button type="button" onClick={() => choose('club', 'register')} className={`py-2 rounded-full text-xs font-bold border ${who === 'club' && action === 'register' ? CHOICE_ON : CHOICE_OFF}`}>
               Register a club
             </button>
           </div>
-          <p className="text-[11px] font-bold uppercase tracking-wide text-[#6b555c] pt-1">Already registered? Sign in</p>
+          </div>
+          <div className="space-y-2 pt-5 border-t border-[#E4D7EE]">
+          <p className="text-[11px] font-bold uppercase tracking-wide text-[#5C4A68]">Already registered? Sign in</p>
           <div className="grid grid-cols-2 gap-2">
-            <button type="button" onClick={() => choose('student', 'signin')} className={`py-2 rounded-full text-xs font-bold border ${who === 'student' && action === 'signin' ? 'bg-[#ec4899] text-white border-[#ec4899]' : 'bg-white text-[#6b555c] border-[#fce7f3]'}`}>
+            <button type="button" onClick={() => choose('student', 'signin')} className={`py-2 rounded-full text-xs font-bold border ${who === 'student' && action === 'signin' ? CHOICE_ON : CHOICE_OFF}`}>
               Student sign in
             </button>
-            <button type="button" onClick={() => choose('club', 'signin')} className={`py-2 rounded-full text-xs font-bold border ${who === 'club' && action === 'signin' ? 'bg-[#ec4899] text-white border-[#ec4899]' : 'bg-white text-[#6b555c] border-[#fce7f3]'}`}>
+            <button type="button" onClick={() => choose('club', 'signin')} className={`py-2 rounded-full text-xs font-bold border ${who === 'club' && action === 'signin' ? CHOICE_ON : CHOICE_OFF}`}>
               Club sign in
             </button>
+          </div>
           </div>
         </div>
 
         <div className="text-center">
-          <h1 className="text-lg font-black">{heading}</h1>
-          <p className="text-xs text-[#6b555c]">{subline}</p>
+          <h1 className="text-lg font-black text-[#3E1B4A]">{heading}</h1>
+          <p className="text-xs text-[#5C4A68]">{subline}</p>
         </div>
 
         <form
@@ -158,7 +166,7 @@ export const AuthScreen: React.FC = () => {
           )}
           {action === 'register' && who === 'student' && (
             <>
-              <label className="block text-xs text-[#6b555c]">
+              <label className="block text-xs text-[#5C4A68]">
                 Date of birth
                 <input required type="date" value={dateOfBirth} onChange={(e) => setDateOfBirth(e.target.value)} className={`${FIELD} mt-1`} />
               </label>
@@ -175,19 +183,20 @@ export const AuthScreen: React.FC = () => {
             <input required type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Telephone number" className={FIELD} />
           )}
           <input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" className={FIELD} />
-          <input required type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" className={FIELD} />
+          <PasswordInput required value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" className={FIELD} />
           {action === 'register' && who === 'student' && (
-            <p className="text-xs text-[#6b555c]">You get one free week to explore the app. After that, it is ₦1,000 a month. Your club reviews your skills once you choose it.</p>
+            <p className="text-xs text-[#5C4A68]">You get one free week to explore the app. After that, it is ₦1,000 a month. Your club reviews your skills once you choose it.</p>
           )}
           {action === 'register' && who === 'club' && (
-            <p className="text-xs text-[#6b555c]">Your club gets 7 days to use every part of GymTrack before you pay. After that, the office is ₦1,000 a month.</p>
+            <p className="text-xs text-[#5C4A68]">Your club gets 7 days to use every part of GymTrack before you pay. After that, the office is ₦1,000 a month.</p>
           )}
           {error && <p className="text-sm text-red-600">{error}</p>}
-          <button disabled={busy} className="w-full py-3 rounded-full bg-[#ec4899] text-white font-bold">
+          <button disabled={busy} className="w-full py-3 rounded-full bg-[#5C2A6E] text-white font-bold disabled:opacity-60">
             {busy ? 'Please wait…' : action === 'signin' ? 'Sign in' : 'Create account'}
           </button>
         </form>
       </div>
+      <PageSketch page="auth" />
     </div>
   );
 };

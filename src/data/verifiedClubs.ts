@@ -1,7 +1,7 @@
 export interface VerifiedClub {
   id: string;
   name: string;
-  city: 'Lagos' | 'Abuja';
+  city: 'Lagos';
   logo: string | null;
   address: string | null;
   /** Areas the club trains in, when it has more than one site. */
@@ -45,39 +45,11 @@ export const VERIFIED_CLUBS: VerifiedClub[] = [
     areas: 'Ajah / Lekki, Gbagada / Maryland, Mowe',
     address: null,
     phone: '0703 966 3526',
-    coach: null,
+    coach: 'Korede Nejo',
     instagram: 'https://www.instagram.com/kofunjo_club/',
     facebook: null,
     tiktok: null,
     youtube: null,
-    missing: ['Club logo', 'Coach name', 'Street addresses', 'Facebook', 'TikTok', 'YouTube'],
-  },
-  {
-    id: 'lagos-state-gymnastics',
-    name: 'Lagos State Gymnastics Club',
-    city: 'Lagos',
-    logo: null,
-    address: null,
-    phone: null,
-    coach: 'Patrick Umoh',
-    instagram: null,
-    facebook: null,
-    tiktok: null,
-    youtube: null,
-    missing: ['Club logo', 'Full address', 'Telephone', 'Instagram', 'Facebook', 'TikTok', 'YouTube'],
-  },
-  {
-    id: 'emmy-gymnastics-abuja',
-    name: 'Emmy Gymnastics Club',
-    city: 'Abuja',
-    logo: null,
-    address: 'FCT Sports Complex, Area 10 Old Parade Ground, Abuja',
-    phone: '+234 906 728 0137',
-    coach: null,
-    instagram: null,
-    facebook: 'https://www.facebook.com/p/Emmy-Gymnastics-100027332606122/',
-    tiktok: null,
-    youtube: null,
-    missing: ['Club logo', "Coach's name", 'Instagram', 'TikTok', 'YouTube'],
+    missing: ['Club logo', 'Street addresses', 'Facebook', 'TikTok', 'YouTube'],
   },
 ];

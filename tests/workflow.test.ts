@@ -282,16 +282,11 @@ test('uploads reject unknown file types and empty files', async () => {
   }
 });
 
-test('connect: a child needs a parent first, then publishing keeps the video and links it to the gymnast', async () => {
+test('connect: a child publishes with no parent step, and the video is kept and linked to the gymnast', async () => {
   const t = await start();
   try {
     const club = await t.club('Alpha Club', 'alpha6@club.test');
     const ava = await t.gymnast('ava6@gym.test', club.clubId);
-    const blocked = await t.upload(ava.token, 'public');
-    assert.equal(blocked.status, 403);
-    assert.equal(blocked.body.code, 'PARENT_REQUIRED');
-
-    await t.call('POST', `/api/students/${ava.id}/parent`, undefined, { parentEmail: 'mum@gym.test' });
     const stored = await t.upload(ava.token, 'public', 'video/mp4', 'x'.repeat(2_000_000));
     assert.equal(stored.status, 201);
 

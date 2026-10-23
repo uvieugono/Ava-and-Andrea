@@ -1,19 +1,22 @@
-import React, { useState } from 'react';
+import React from 'react';
+import { Play } from 'lucide-react';
 import { useGym } from '../context/GymContext';
-import { WorkoutModal } from '../components/WorkoutModal';
-import { Workout } from '../types';
-import { matchingTutorial, requiredSkillsFor, submissionLabel, weeklyDrills, youtubeId } from '../lib/curriculum';
+import { matchingTutorial, requiredSkillsFor, submissionLabel } from '../lib/curriculum';
 import { OPTIONAL_LEVEL_NOTE, levelHasRequirements } from '../data/curriculumUpdates';
 import { ContactForm } from '../components/ContactForm';
 
+// Today's conditioning exercises, from the 20 October 2026 brief.
+const CONDITIONING = [
+  { id: 'UwZ3IlK43PA', title: 'Strength' },
+  { id: 'nJ_uNf7Nkes', title: 'Flexibility' },
+];
+
 export const HomeScreen: React.FC = () => {
   const { user, skills, setCurrentTab, notices } = useGym();
-  const [activeWorkout, setActiveWorkout] = useState<Workout | null>(null);
   const required = requiredSkillsFor(skills, user.level, user.offersBars !== false, user.offersBeam !== false);
   const noRequirements = !levelHasRequirements(user.level);
   const mastered = required.filter((skill) => skill.status === 'VERIFIED');
   const learning = required.filter((skill) => skill.status !== 'VERIFIED').slice(0, 4);
-  const { week, drills } = weeklyDrills();
 
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-6 py-6 space-y-10">
@@ -76,38 +79,28 @@ export const HomeScreen: React.FC = () => {
       </section>
 
       <section className="space-y-3">
-        <div>
-          <h2 className="font-display text-2xl text-[#3E1B4A]">Today&apos;s Conditioning & Drills</h2>
-          <p className="text-sm text-[#5C4A68]">Week {week}. These clips change with the week.</p>
-        </div>
-        <div className="space-y-4">
-          {drills.map((drill) => {
-            const id = youtubeId(drill.videoUrl);
-            return (
-              <article key={drill.id} className="bg-white border border-[#E4D7EE] rounded-2xl overflow-hidden">
-                {id ? (
-                  <iframe
-                    title={drill.title}
-                    src={`https://www.youtube.com/embed/${id}`}
-                    className="w-full aspect-video"
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                    allowFullScreen
-                  />
-                ) : (
-                  <p className="p-4 text-sm">Demonstration unavailable.</p>
-                )}
-                <div className="p-4 flex items-center justify-between gap-3">
-                  <div>
-                    <h3 className="text-[#241628]">{drill.title}</h3>
-                    <p className="text-sm text-[#5C4A68]">{drill.durationMin} min</p>
-                  </div>
-                  <button type="button" onClick={() => setActiveWorkout(drill)} className="px-4 py-2 rounded-full bg-[#5C2A6E] text-white text-sm">
-                    Start
-                  </button>
-                </div>
-              </article>
-            );
-          })}
+        <h2 className="font-display text-2xl text-[#3E1B4A]">Today&apos;s conditioning exercises</h2>
+        <div className="grid sm:grid-cols-2 gap-4">
+          {CONDITIONING.map((item) => (
+            <a
+              key={item.id}
+              href={`https://www.youtube.com/watch?v=${item.id}`}
+              target="_blank"
+              rel="noreferrer"
+              className="block bg-white border border-[#E4D7EE] rounded-2xl overflow-hidden"
+              aria-label={`Play the ${item.title} exercise on YouTube`}
+            >
+              <span className="relative block">
+                <img src={`https://i.ytimg.com/vi/${item.id}/hqdefault.jpg`} alt="" className="w-full aspect-video object-cover" />
+                <span className="absolute inset-0 flex items-center justify-center">
+                  <span className="w-14 h-14 rounded-full bg-[#5C2A6E]/90 text-white flex items-center justify-center">
+                    <Play className="w-6 h-6 fill-current" />
+                  </span>
+                </span>
+              </span>
+              <span className="block p-4 text-[#241628]">{item.title}</span>
+            </a>
+          ))}
         </div>
       </section>
 
@@ -131,7 +124,6 @@ export const HomeScreen: React.FC = () => {
         <ContactForm />
       </section>
 
-      {activeWorkout && <WorkoutModal workout={activeWorkout} onClose={() => setActiveWorkout(null)} />}
     </div>
   );
 };

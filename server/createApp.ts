@@ -241,8 +241,30 @@ export async function createApp(options?: { dbPath?: string; databaseUrl?: strin
       res.status(201).json({ post: await store.createPost(user, req.body ?? {}) });
     } catch (error) {
       const message = error instanceof Error ? error.message : '';
-      res.status(message === 'PARENT_REQUIRED' || message === 'PAYMENT_REQUIRED' ? 403 : 400).json({ code: message || 'ERROR' });
+      res.status(message === 'PAYMENT_REQUIRED' ? 403 : 400).json({ code: message || 'ERROR' });
     }
+  }));
+
+  app.delete('/api/inspo/:id', asyncRoute(async (req, res) => {
+    const user = await requireAccount(req, res);
+    if (!user) return;
+    try {
+      res.json(await store.deletePost(user, req.params.id));
+    } catch (error) {
+      fail(res, error);
+    }
+  }));
+
+  app.get('/api/inspo/liked', asyncRoute(async (req, res) => {
+    const user = await requireAccount(req, res);
+    if (!user) return;
+    res.json({ posts: store.likedPosts(user) });
+  }));
+
+  app.get('/api/inspo/mine', asyncRoute(async (req, res) => {
+    const user = await requireAccount(req, res);
+    if (!user) return;
+    res.json({ posts: store.myPosts(user) });
   }));
 
   app.post('/api/inspo/:id/like', asyncRoute(async (req, res) => {
@@ -398,6 +420,78 @@ export async function createApp(options?: { dbPath?: string; databaseUrl?: strin
     }
   }));
 
+  app.delete('/api/club/notices/:id', asyncRoute(async (req, res) => {
+    const staff = await requireStaffAccount(req, res);
+    if (!staff) return;
+    try {
+      res.json(await store.deleteNotice(staff, req.params.id));
+    } catch (error) {
+      fail(res, error);
+    }
+  }));
+
+  app.patch('/api/club/details', asyncRoute(async (req, res) => {
+    const staff = await requireStaffAccount(req, res);
+    if (!staff) return;
+    try {
+      res.json({ club: await store.updateClubDetails(staff, req.body ?? {}) });
+    } catch (error) {
+      fail(res, error);
+    }
+  }));
+
+  app.post('/api/club/certificates', asyncRoute(async (req, res) => {
+    const staff = await requireStaffAccount(req, res);
+    if (!staff) return;
+    try {
+      res.status(201).json({ certificate: await store.addCertificate(staff, req.body ?? {}) });
+    } catch (error) {
+      fail(res, error);
+    }
+  }));
+
+  app.get('/api/certificates', asyncRoute(async (req, res) => {
+    const user = await requireAccount(req, res);
+    if (!user) return;
+    res.json({ certificates: store.certificatesFor(user) });
+  }));
+
+  app.post('/api/club/drills', asyncRoute(async (req, res) => {
+    const staff = await requireStaffAccount(req, res);
+    if (!staff) return;
+    try {
+      res.status(201).json({ drill: await store.addDrill(staff, req.body ?? {}) });
+    } catch (error) {
+      fail(res, error);
+    }
+  }));
+
+  app.get('/api/drills', asyncRoute(async (req, res) => {
+    const user = await requireAccount(req, res);
+    if (!user) return;
+    res.json({ drills: store.drillsFor(user) });
+  }));
+
+  app.post('/api/club/competition-events', asyncRoute(async (req, res) => {
+    const staff = await requireStaffAccount(req, res);
+    if (!staff) return;
+    try {
+      res.status(201).json({ competitions: await store.addCompetitionEvent(staff, req.body ?? {}) });
+    } catch (error) {
+      fail(res, error);
+    }
+  }));
+
+  app.post('/api/club/competition-events/:id/results', asyncRoute(async (req, res) => {
+    const staff = await requireStaffAccount(req, res);
+    if (!staff) return;
+    try {
+      res.json({ competitions: await store.recordCompetitionResults(staff, req.params.id, Array.isArray(req.body?.results) ? req.body.results : []) });
+    } catch (error) {
+      fail(res, error);
+    }
+  }));
+
   app.get('/api/notices', asyncRoute(async (req, res) => {
     const user = await requireAccount(req, res);
     if (!user) return;
@@ -495,14 +589,6 @@ export async function createApp(options?: { dbPath?: string; databaseUrl?: strin
       return;
     }
     const scope = isVideo && req.query.scope === 'public' ? 'public' : 'private';
-    // A child's public video needs a parent's OK first. Stop before storing anything.
-    if (scope === 'public') {
-      const view = store.publicUser(user);
-      if (view.under18 && !view.parentAccepted) {
-        res.status(403).json({ code: 'PARENT_REQUIRED' });
-        return;
-      }
-    }
     const fileName = `${randomBytes(12).toString('hex')}${isVideo ? VIDEO_EXT[mime] : DOCUMENT_MIME[mime]}`;
     const displayName = String(req.query.name ?? 'upload').slice(0, 200);
     let stored;

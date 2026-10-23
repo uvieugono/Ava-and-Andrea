@@ -24,6 +24,7 @@ export function skillsForLevel(skills: Skill[], level: number) {
 }
 
 export function skillIsRequired(skill: Skill, offersBars: boolean, offersBeam: boolean) {
+  if (skill.optional) return false;
   if (skill.category === 'BARS' && !offersBars) return false;
   if (skill.category === 'BEAM' && !offersBeam) return false;
   return true;

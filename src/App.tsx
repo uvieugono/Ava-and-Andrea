@@ -13,11 +13,11 @@ import { ProfileScreen } from './screens/ProfileScreen';
 import { AuthScreen } from './screens/AuthScreen';
 import { InspoScreen } from './screens/InspoScreen';
 import { ContactScreen } from './screens/ContactScreen';
-import { AddStudentsPanel } from './components/AddStudentsPanel';
 import { PaymentRequired } from './components/PaymentRequired';
 import { readAccess } from './services/gymApi';
 import { ClubsScreen } from './screens/ClubsScreen';
 import { GymDashboardScreen } from './screens/GymDashboardScreen';
+import { PageSketch } from './components/GymnastSketch';
 
 const MainApp: React.FC = () => {
   const { user, ready, currentTab, userRole, isStaff, logoutUser } = useGym();
@@ -66,8 +66,7 @@ const MainApp: React.FC = () => {
                 {userRole === 'CLUB_ADMIN' && access.status === 'trial' && clubTrialLabel && (
                   <p className="max-w-3xl mx-auto px-4 mb-3 text-sm text-[#6b555c]">Your club can use every part of GymTrack until {clubTrialLabel}. Payment starts after this free week.</p>
                 )}
-                {userRole === 'CLUB_ADMIN' && <AddStudentsPanel />}
-                <GymDashboardScreen />
+                    <GymDashboardScreen />
               </>
             )}
             {currentTab === 'community' && <InspoScreen />}
@@ -75,6 +74,7 @@ const MainApp: React.FC = () => {
             {currentTab === 'profile' && <ProfileScreen />}
           </>
         )}
+        <PageSketch page={currentTab} />
       </main>
 
       {/* Floating XP Reward Notification Toast */}

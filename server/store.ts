@@ -6,9 +6,11 @@ import { INITIAL_REGISTERED_CLUBS } from '../src/data/gymManagementData.ts';
 import {
   createWorkflow,
   type AttendanceRecord,
+  type CertificateRecord,
   type CompetitionRecord,
   type ContactRecord,
   type DocumentRecord,
+  type DrillRecord,
   type FeeReminderRecord,
   type NoticeRecord,
   type Notifiers,
@@ -67,6 +69,10 @@ export interface ClubRecord {
   country: string;
   adminUserId: string;
   trialEndsAt?: string | null;
+  /** Shown on certificates. */
+  coachName?: string | null;
+  logoUploadId?: string | null;
+  signatureUploadId?: string | null;
 }
 
 export interface PaymentRecord {
@@ -88,6 +94,8 @@ export interface InspoPost {
   clubTag: string;
   hashtags: string[];
   visibility: Visibility;
+  /** For visibility 'club': the one club that can see the video. Older posts use the author's club. */
+  audienceClubId?: string | null;
   showAge: boolean;
   showLevel: boolean;
   createdAt: string;
@@ -134,6 +142,8 @@ export interface DatabaseShape {
   feeReminders: FeeReminderRecord[];
   contacts: ContactRecord[];
   uploads: UploadRecord[];
+  certificates: CertificateRecord[];
+  drills: DrillRecord[];
 }
 
 const CITY_COORDS: Record<string, [number, number]> = {
@@ -163,6 +173,8 @@ export function emptyDb(): DatabaseShape {
     feeReminders: [],
     contacts: [],
     uploads: [],
+    certificates: [],
+    drills: [],
   };
 }
 
@@ -429,7 +441,11 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
     if (post.visibility === 'everyone') return true;
     if (!viewer) return false;
     if (viewer.id === post.authorId) return true;
-    if (post.visibility === 'club') return viewer.clubId !== null && viewer.clubId === db.users.find((item) => item.id === post.authorId)?.clubId;
+    if (post.visibility === 'club') {
+      const audience = post.audienceClubId ?? db.users.find((item) => item.id === post.authorId)?.clubId ?? null;
+      const viewerClub = viewer.clubId ?? viewer.selectedClubId ?? null;
+      return audience !== null && viewerClub === audience;
+    }
     return db.follows.some((item) => item.followerId === viewer.id && item.targetUserId === post.authorId);
   }
 
@@ -443,6 +459,8 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
       username: author?.username ?? 'gymnast',
       clubId: author?.clubId ?? null,
       clubName: post.clubTag || club?.name || null,
+      audienceClubName: post.visibility === 'club' && post.audienceClubId ? db.clubs.find((item) => item.id === post.audienceClubId)?.name ?? null : null,
+      mine: viewer?.id === post.authorId,
       age: post.showAge ? age : null,
       level: post.showLevel ? author?.level ?? null : null,
       likes: db.likes.filter((item) => item.postId === post.id).length,
@@ -460,6 +478,14 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
 
   return {
     ...workflow,
+
+    /** A private Connect video can be opened by anyone the post is shown to, such as the chosen club. */
+    canReadUpload(user: UserRecord | null, upload: UploadRecord) {
+      if (workflow.canReadUpload(user, upload)) return true;
+      if (!user) return false;
+      const url = `/api/uploads/${upload.id}`;
+      return db.posts.some((post) => post.videoUrl === url && canSeePost(user, post));
+    },
 
     async registerClub(input: { clubName: string; city: string; adminName: string; email: string; password: string; phone?: string }) {
       const email = input.email.trim().toLowerCase();
@@ -638,13 +664,12 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
         clubTag?: string;
         hashtags?: string[];
         visibility: Visibility;
+        audienceClubId?: string | null;
         showAge?: boolean;
         showLevel?: boolean;
       },
     ) {
       if (!accessOpen(author)) throw new Error('PAYMENT_REQUIRED');
-      const age = ageYears(author.dateOfBirth);
-      if (age !== null && age < 18 && !author.parentAccepted) throw new Error('PARENT_REQUIRED');
       const category = String(input.category);
       if (!INSPO_CATEGORIES.includes(category as InspoCategory) || category === 'All') throw new Error('CATEGORY');
       if (!input.videoUrl || typeof input.videoUrl !== 'string') throw new Error('VIDEO_REQUIRED');
@@ -652,6 +677,12 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
       if (!upload || upload.ownerId !== author.id || !upload.mime.startsWith('video/')) throw new Error('VIDEO_INVALID');
       if (!String(input.skill ?? '').trim()) throw new Error('SKILL_REQUIRED');
       const club = author.clubId ? db.clubs.find((item) => item.id === author.clubId) : null;
+      const visibility = (['everyone', 'followers', 'club'] as const).includes(input.visibility) ? input.visibility : 'everyone';
+      let audienceClubId: string | null = null;
+      if (visibility === 'club') {
+        audienceClubId = input.audienceClubId || author.clubId || author.selectedClubId || null;
+        if (!audienceClubId || !db.clubs.some((item) => item.id === audienceClubId)) throw new Error('CLUB_REQUIRED');
+      }
       const post: InspoPost = {
         id: id('post'),
         authorId: author.id,
@@ -661,7 +692,8 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
         category: category as Exclude<InspoCategory, 'All'>,
         clubTag: input.clubTag?.trim() || club?.name || '',
         hashtags: input.hashtags ?? [],
-        visibility: (['everyone', 'followers', 'club'] as const).includes(input.visibility) ? input.visibility : 'everyone',
+        visibility,
+        audienceClubId,
         showAge: Boolean(input.showAge),
         showLevel: Boolean(input.showLevel),
         createdAt: new Date().toISOString(),
@@ -689,15 +721,45 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
         .map((post) => presentPost(post, viewer));
     },
 
+    /** Likes the post, or takes the like back if the user already liked it. */
     async like(user: UserRecord, postId: string) {
       const post = db.posts.find((item) => item.id === postId);
       if (!post || !canSeePost(user, post)) throw new Error('NOT_FOUND');
-      if (!db.likes.some((item) => item.postId === postId && item.userId === user.id)) {
+      const index = db.likes.findIndex((item) => item.postId === postId && item.userId === user.id);
+      if (index >= 0) {
+        db.likes.splice(index, 1);
+      } else {
         db.likes.push({ postId, userId: user.id });
         notify(post.authorId, 'like', user.id, postId);
-        await save();
       }
+      await save();
       return presentPost(post, user);
+    },
+
+    likedPosts(user: UserRecord) {
+      const ids = new Set(db.likes.filter((item) => item.userId === user.id).map((item) => item.postId));
+      return db.posts.filter((post) => ids.has(post.id) && canSeePost(user, post)).map((post) => presentPost(post, user));
+    },
+
+    /** Videos the user published on Connect, newest first. */
+    myPosts(user: UserRecord) {
+      return db.posts.filter((post) => post.authorId === user.id).map((post) => presentPost(post, user));
+    },
+
+    /** Removes the user's own video from Connect, with its likes, saves, comments and notifications. */
+    async deletePost(user: UserRecord, postId: string) {
+      const post = db.posts.find((item) => item.id === postId);
+      if (!post) throw new Error('NOT_FOUND');
+      if (post.authorId !== user.id) throw new Error('FORBIDDEN');
+      db.posts = db.posts.filter((item) => item.id !== postId);
+      db.likes = db.likes.filter((item) => item.postId !== postId);
+      db.saves = db.saves.filter((item) => item.postId !== postId);
+      const commentIds = new Set(db.comments.filter((item) => item.postId === postId).map((item) => item.id));
+      db.comments = db.comments.filter((item) => item.postId !== postId);
+      db.commentReports = db.commentReports.filter((item) => !commentIds.has(item.commentId));
+      db.notifications = db.notifications.filter((item) => item.postId !== postId);
+      await save();
+      return { ok: true };
     },
 
     async comment(user: UserRecord, postId: string, text: string, parentCommentId: string | null) {
@@ -732,10 +794,10 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
     async savePost(user: UserRecord, postId: string) {
       const post = db.posts.find((item) => item.id === postId);
       if (!post || !canSeePost(user, post)) throw new Error('NOT_FOUND');
-      if (!db.saves.some((item) => item.postId === postId && item.userId === user.id)) {
-        db.saves.push({ postId, userId: user.id });
-        await save();
-      }
+      const index = db.saves.findIndex((item) => item.postId === postId && item.userId === user.id);
+      if (index >= 0) db.saves.splice(index, 1);
+      else db.saves.push({ postId, userId: user.id });
+      await save();
       return presentPost(post, user);
     },
 

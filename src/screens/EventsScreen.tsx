@@ -29,6 +29,11 @@ export const EventsScreen: React.FC = () => {
           <p>The Dome, Freedom Way, Lekki Phase 1, Lagos</p>
           <p>Convened by Tee Tumblers Gymnastics Club and the Society for the Performing Arts in Nigeria.</p>
           <p>Published gymnast entry is ₦20,000. Spectator entry is ₦5,000.</p>
+          <p>
+            <a href="https://www.gymfestchampionship.com/" target="_blank" rel="noreferrer" className="text-[#5C2A6E] underline">
+              Visit the GymFest 3.0 website
+            </a>
+          </p>
         </div>
       </article>
     </div>
