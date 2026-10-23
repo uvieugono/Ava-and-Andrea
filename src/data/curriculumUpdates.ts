@@ -38,13 +38,53 @@ export const REMOVED_SKILL_IDS = new Set([
 ]);
 
 // id -> new name, and the demonstration video for it.
-export const SKILL_UPDATES: Record<string, { name?: string; videoId?: string }> = {
+// videoId null removes the demonstration, so the page says it is unavailable.
+export const SKILL_UPDATES: Record<string, { name?: string; videoId?: string | null }> = {
   gf_pre_fl_04: { videoId: 'otoDVplyg9w' },
   gf_l1_slv_03: { videoId: 'zrdHn1ALJFk' },
   gf_l1_slv_04: { videoId: '1NSjxa9gLAA' },
   // 20 October 2026 brief: the two Level 1 skills that showed "demonstration unavailable"
   gap_l1_ub_01: { videoId: 'SBYwvNCRP0g' },
   gap_l1_bb_02: { videoId: 'zPDHpxPTuH4' },
+
+  // Replaces video ids that do not exist on YouTube (checked with oEmbed, 23 October 2026).
+  gap_l1_bb_01: { videoId: 'h9Eweq7N7U0' }, // front support mount (blue beam).mov
+  gap_l1_ub_02: { videoId: 'Vg38GDOdt18' }, // INVERTED CANDLESTICK DRILL for bars! #gymnasticscoach #gymnast #gymnas
+  gap_l1_vt_01: { videoId: 'XUPTTA1tY6M' }, // Gymnastics Handstand Flatback Vault Tutorial| Kyra SGG
+  gap_l2_bb_01: { videoId: 'kSzkbty-zww' }, // Gymnastics Handstand On Beam Tutorial| Kyra SGG
+  gap_l2_ub_01: { videoId: 'og1v6Ojaoz4' }, // HOW TO LEARN TO DO A PULL OVER ON BARS - PULLOVER TUTORIAL - Gymnastic
+  gap_l2_ub_02: { videoId: '5oqw_fdqlKg' }, // How to do a Cast on Bars in Gymnastics
+  gap_l2_ub_03: { videoId: '9SLhK3u5FUE' }, // Beginner Gymnastics Back Hip Circle Tutorial
+  gap_slv_bb_02: { videoId: 'Tqa5MhkG0t4' }, // How to do a handstand on gymnastics beam
+  gap_slv_bb_03: { videoId: 'PM3E566pB6E' }, // How to Do a Cartwheel on Beam (Beginner Tutorial)
+  gap_slv_bb_04: { videoId: 'lAbbuBjkahc' }, // Banded Beam Split Jumps
+  gap_slv_bb_05: { videoId: 'qDgMWxb_U_k' }, // Level 2/3 Gymnastics Half Turn & Snap Turn Tips With Coach Meggin!
+  gap_slv_bb_06: { videoId: 'tl-XLz2FOS4' }, // Roundoff dismount drills for beam
+  gap_slv_fx_04: { videoId: 'vwWu0Afs_Nk' }, // #GymnasticsHowTo: Perfect Your Split Leap
+  gap_slv_ub_01: { videoId: 'RDjaQfAEdzU' }, // Teaching Glide Swings to Level 2 Gymnasts
+  gap_slv_ub_03: { videoId: 'SBYwvNCRP0g' }, // Beginner Gymnastics Cast Tutorial on Bars
+  gap_slv_ub_05: { videoId: '9nzSvIgbXMg' }, // STRADDLE & PIKE UNDERSHOOT TUTORIAL
+  gap_gld_bb_01: { videoId: 'biO0PYd-jI8' }, // How to do a Back Walkover on Beam!
+  gap_gld_bb_03: { videoId: 'vwWu0Afs_Nk' }, // #GymnasticsHowTo: Perfect Your Split Leap
+  gap_gld_ub_01: { videoId: 'bSlBi9eAD9c' }, // How To Glide Kip On Bars With Coach Meggin
+  gap_gld_ub_02: { videoId: 'YMJNXaevWT0' }, // Bars Circuit for Casts to Horizontal
+  gap_gld_ub_03: { videoId: 'wn5-IVobqY0' }, // A Clear Hip Circle Tutorial
+  gap_gld_ub_04: { videoId: 'awHi293w26g' }, // Jamie Squat on, Jump to High Bar
+  gap_gld_vt_01: { videoId: 'QcDta7xyCx0' }, // Learning the Front Handspring Vault | (Drills and All you need to know
+  gap_gld_bb_02: { videoId: 'dWDrHKs5rD4' }, // Back Handspring Step Out On Balance Beam Tutorial With Coach Meggin!
+  gap_gld_bb_05: { videoId: 'CbutRDvUaxw' }, // Punch Front (Front Flip/Tuck) Dismount Off Beam With Coach Meggin!
+  gap_gld_ub_05: { videoId: 'RzMnUVcFrvA' }, // Flyaway Dismount on Bars featuring Coach Mary Lee Tracy
+  gf_l5_plt_02: { videoId: null }, // no real demonstration found yet
+  gap_plt_bb_01: { videoId: 'dWDrHKs5rD4' }, // Back Handspring Step Out On Balance Beam Tutorial With Coach Meggin!
+  gap_plt_bb_03: { videoId: null }, // no real demonstration found yet
+  gap_plt_ub_03: { videoId: 'RzMnUVcFrvA' }, // Flyaway Dismount on Bars featuring Coach Mary Lee Tracy
+  gf_l6_plt_02: { videoId: 'oN7L8sdVqgU' }, // Split, Switch & Side Leaps - Tour Jeté & Dance Connections
+  gap_plt_bb_02: { videoId: 'qve9Hg4dOMM' }, // Artistic Gymnastics on Beam | How to do the Side Aerial | Overview of 
+  gap_plt_fx_02: { videoId: 'eTMGAUcouDU' }, // LAYOUT HALF-TWIST TUTORIAL
+  gap_plt_fx_04: { videoId: 'oN7L8sdVqgU' }, // Split, Switch & Side Leaps - Tour Jeté & Dance Connections
+  gap_plt_ub_01: { videoId: 'NrVhnMiYg7w' }, // #GymnasticsHowTo: Cast-to-Handstand
+  gap_plt_ub_02: { videoId: '1dP6MxwYPco' }, // #GymnasticsHowTo: The Giant Swing
+  gap_plt_vt_02: { videoId: 'Lz-SfjPlr9I' }, // Tsukahara Vault Drills Progression
 
   gf_l2_slv_04: { name: 'Bridge with one leg raised up', videoId: 'WCk6YQDIzWU' },
   gf_l2_gld_01: { name: 'Handstand bridge stand up', videoId: 'hx-X_bgNpTc' },
@@ -138,8 +178,8 @@ export function applyCurriculumUpdates(base: Skill[]): Skill[] {
     return {
       ...skill,
       name,
-      tutorial: change?.videoId ? tutorialFor(name, change.videoId) : skill.tutorial,
-      tutorialStatus: change?.videoId ? 'FOUND' : skill.tutorialStatus,
+      tutorial: change?.videoId ? tutorialFor(name, change.videoId) : change?.videoId === null ? null : skill.tutorial,
+      tutorialStatus: change?.videoId ? 'FOUND' : change?.videoId === null ? 'NOT_FOUND' : skill.tutorialStatus,
       // No one starts with approved skills. Status comes from the club's approvals.
       status: 'NOT_COMPLETED',
       verifiedBy: undefined,
