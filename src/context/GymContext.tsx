@@ -34,6 +34,8 @@ import {
   Progress,
   SkillState,
   clearAccess,
+  readAccess,
+  setAccess,
   getToken,
   gymApi,
   mediaUrl,
@@ -93,6 +95,7 @@ interface GymContextType {
   publishNotice: (title: string, body: string) => Promise<ActionResult>;
   deleteNotice: (noticeId: string) => Promise<ActionResult>;
   addDocument: (file: File) => Promise<ActionResult>;
+  deleteDocument: (documentId: string) => Promise<ActionResult>;
   updateClubDetails: (input: { coachName?: string; logo?: File | null; signature?: File | null }) => Promise<ActionResult>;
   saveCertificate: (image: Blob, input: { gymnastId: string | null; gymnastName: string; title: string; awardDate: string; template: string }) => Promise<ActionResult & { certificate?: CertificateView }>;
   addDrill: (input: { gymnastIds: string[]; title: string; description: string; instructions: string; attachment: File | null }) => Promise<ActionResult>;
@@ -135,7 +138,9 @@ interface GymContextType {
 
 const GymContext = createContext<GymContextType | undefined>(undefined);
 
-const DEFAULT_AVATAR = 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80';
+// No default or stock photos. A person's photo is only one they uploaded (a data: image);
+// older saved choices of the stock gymnast avatars are ignored.
+const ownPhoto = (value: string | null) => (value && value.startsWith('data:image/') ? value : '');
 
 const SIGNED_OUT: UserProfile = {
   id: '',
@@ -144,7 +149,7 @@ const SIGNED_OUT: UserProfile = {
   email: '',
   level: 1,
   clubName: '',
-  avatar: DEFAULT_AVATAR,
+  avatar: '',
   xp: 0,
   nextLevelXpGoal: 1000,
   dayStreak: 0,
@@ -181,7 +186,7 @@ function toProfile(api: ApiUser): UserProfile {
     level: ((api.level ?? 1) as USAGLevel),
     // Only the club this person really belongs to or chose. Never a default club.
     clubName: api.clubName ?? api.selectedClubName ?? '',
-    avatar: stored || DEFAULT_AVATAR,
+    avatar: ownPhoto(stored),
     xp: 0,
     nextLevelXpGoal: 1000,
     dayStreak: 0,
@@ -322,6 +327,9 @@ export const GymProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setProgress(null);
     }
     applyServerUser(next);
+    // Keep the access state current, e.g. a gymnast who chooses a club stops needing to pay.
+    const access = readAccess();
+    setAccess(next.access ?? next.status, me.payment, access.devMatch, next.periodEnd ?? null);
     gymApi.notices().then((result) => setNotices(result.notices)).catch(() => undefined);
   }, [applyServerUser, awardXp]);
 
@@ -344,7 +352,9 @@ export const GymProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setMyCertificates([]);
     setMyDrills([]);
     setUser({ ...toProfile(api), xp: 0 });
-    setTab(api.role === 'CLUB_ADMIN' || api.role === 'COACH' ? 'dashboard' : 'home');
+    // A shared video link (?video=…) opens Connect on that video.
+    const sharedVideo = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('video');
+    setTab(sharedVideo ? 'community' : api.role === 'CLUB_ADMIN' || api.role === 'COACH' ? 'dashboard' : 'home');
     setReady(true);
   }, []);
 
@@ -405,6 +415,11 @@ export const GymProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       // The Club Dashboard is only for signed-in club accounts.
       if (tab === 'dashboard' && !isStaff) {
         setTab('home');
+        return;
+      }
+      // Club accounts only use the club pages; the gymnast pages send them to their dashboard.
+      if (isStaff && (tab === 'home' || tab === 'skills' || tab === 'progress')) {
+        setTab('dashboard');
         return;
       }
       setTab(tab);
@@ -531,6 +546,19 @@ export const GymProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return { ok: true, message: 'Notice published. Your gymnasts can see it on their profile and home page.' };
     } catch {
       return { ok: false, message: 'The notice could not be published. Fill in both fields and try again.' };
+    }
+  };
+
+  const deleteDocument: GymContextType['deleteDocument'] = async (documentId) => {
+    // Take it off the list straight away; the server confirms below.
+    setOverview((prev) => (prev ? { ...prev, documents: prev.documents.filter((item) => item.id !== documentId) } : prev));
+    try {
+      await gymApi.deleteDocument(documentId);
+      await refreshOverview();
+      return { ok: true, message: 'Document deleted from the club storage.' };
+    } catch (error) {
+      await refreshOverview();
+      return { ok: false, message: errorCode(error) === 'NOT_FOUND' ? 'That document was already deleted.' : 'The document could not be deleted. Try again.' };
     }
   };
 
@@ -675,7 +703,7 @@ export const GymProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         id: member.id,
         name: member.name,
         level: member.level as USAGLevel,
-        avatar: localStorage.getItem(avatarKey(member.id)) || DEFAULT_AVATAR,
+        avatar: ownPhoto(localStorage.getItem(avatarKey(member.id))),
         age: ageYears(member.dateOfBirth),
         clubName: member.clubName ?? user.clubName,
         eventsFocus: focus,
@@ -875,6 +903,7 @@ export const GymProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         publishNotice,
         deleteNotice,
         addDocument,
+        deleteDocument,
         updateClubDetails,
         saveCertificate,
         addDrill,

@@ -10,7 +10,7 @@ export const PaymentRequired: React.FC<{ onUnlock: () => void; onLogout: () => v
   const unlockIfPaid = async () => {
     const me = await gymApi.me();
     setAccess(me.user.access ?? me.user.status, me.payment, access.devMatch, me.user.periodEnd ?? null);
-    if (me.user.access === 'paid' || me.user.access === 'trial' || me.user.status === 'active') onUnlock();
+    if (me.user.access === 'paid' || me.user.access === 'trial' || me.user.access === 'club' || me.user.status === 'active') onUnlock();
     else setMessage('The transfer has not matched yet.');
   };
 

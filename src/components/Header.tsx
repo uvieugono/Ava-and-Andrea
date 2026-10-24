@@ -1,8 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useGym } from '../context/GymContext';
 import { ChevronDown, LogOut, Menu, X } from 'lucide-react';
 import { NavigationTab } from '../types';
 import { Logo } from './Logo';
+import { Avatar } from './Avatar';
 
 const NAV: { id: NavigationTab; label: string }[] = [
   { id: 'home', label: 'Home' },
@@ -15,6 +17,8 @@ const NAV: { id: NavigationTab; label: string }[] = [
   { id: 'contact', label: 'Contact Us' },
 ];
 
+const GYMNAST_ONLY: NavigationTab[] = ['home', 'skills', 'progress'];
+
 function isActive(current: NavigationTab, id: NavigationTab) {
   if (current === id) return true;
   if (id === 'events' && current === 'competitions') return true;
@@ -23,8 +27,8 @@ function isActive(current: NavigationTab, id: NavigationTab) {
 
 export const Header: React.FC = () => {
   const { user, currentTab, setCurrentTab, isStaff, logoutUser } = useGym();
-  // The Club Dashboard is only for signed-in club accounts.
-  const items = NAV.filter((item) => item.id !== 'dashboard' || isStaff);
+  // The Club Dashboard is only for signed-in club accounts. Clubs do not see the gymnast pages.
+  const items = NAV.filter((item) => (isStaff ? !GYMNAST_ONLY.includes(item.id) : item.id !== 'dashboard'));
   const [open, setOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const profileRef = useRef<HTMLDivElement>(null);
@@ -60,7 +64,8 @@ export const Header: React.FC = () => {
       ? [{ id: 'dashboard' as NavigationTab, label: 'Club Dashboard' }]
       : [
           { id: 'profile' as NavigationTab, label: 'My Videos', anchor: 'profile-videos' },
-          { id: 'profile' as NavigationTab, label: 'My Drills and Certificates', anchor: 'profile-drills' },
+          { id: 'profile' as NavigationTab, label: 'My Drills', anchor: 'profile-drills' },
+          { id: 'profile' as NavigationTab, label: 'My Certificates', anchor: 'profile-certificates' },
           { id: 'profile' as NavigationTab, label: 'Competition History', anchor: 'profile-competitions' },
           { id: 'progress' as NavigationTab, label: 'My Progress' },
         ]),
@@ -88,7 +93,7 @@ export const Header: React.FC = () => {
   return (
     <header className="fixed top-0 inset-x-0 z-40 bg-white/95 backdrop-blur border-b border-[#E4D7EE]">
       <div className="max-w-6xl mx-auto px-4 h-16 flex items-center gap-4">
-        <button type="button" onClick={() => go('home')} className="shrink-0" aria-label="GymTrack home">
+        <button type="button" onClick={() => go(isStaff ? 'dashboard' : 'home')} className="shrink-0" aria-label="GymTrack home">
           <Logo />
         </button>
         <nav className="hidden lg:flex items-center gap-1 flex-1">
@@ -114,7 +119,7 @@ export const Header: React.FC = () => {
             aria-haspopup="menu"
             aria-expanded={profileOpen}
           >
-            <img src={user.avatar} alt="" className="w-9 h-9 rounded-full object-cover" />
+            <Avatar src={user.avatar} name={user.fullName} className="w-9 h-9 rounded-full text-xs" />
             <span className="hidden sm:block text-sm text-[#241628] max-w-[8rem] truncate">{user.fullName}</span>
             <ChevronDown className={`w-4 h-4 text-[#5C4A68] transition-transform ${profileOpen ? 'rotate-180' : ''}`} />
           </button>
@@ -147,9 +152,10 @@ export const Header: React.FC = () => {
           <Menu className="w-6 h-6" />
         </button>
       </div>
-      {open && (
+      {/* Rendered on <body>: inside the blurred header a fixed panel is only as tall as the header. */}
+      {open && createPortal(
         <div className="lg:hidden fixed inset-0 z-50 bg-[#241628]/40" onClick={() => setOpen(false)}>
-          <div className="bg-white h-full w-72 p-5 space-y-2" onClick={(event) => event.stopPropagation()}>
+          <div className="bg-white h-full w-72 p-5 space-y-2 overflow-y-auto" onClick={(event) => event.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
               <Logo />
               <button type="button" aria-label="Close menu" onClick={() => setOpen(false)}><X /></button>
@@ -168,7 +174,7 @@ export const Header: React.FC = () => {
             ))}
           </div>
         </div>
-      )}
+      , document.body)}
     </header>
   );
 };

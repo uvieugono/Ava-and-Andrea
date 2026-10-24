@@ -213,3 +213,49 @@ export function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
     canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('CANVAS'))), 'image/png');
   });
 }
+
+/** Saves an image to the device. Fetches it first so it works for stored files and on phones. */
+export async function downloadImage(src: string, fileName: string) {
+  const response = await fetch(src);
+  if (!response.ok) throw new Error('DOWNLOAD');
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+/** Opens the print dialog for one image, from a hidden frame so pop-up blockers do not stop it. */
+export function printImage(src: string, title: string) {
+  return new Promise<void>((resolve, reject) => {
+    const frame = document.createElement('iframe');
+    frame.setAttribute('aria-hidden', 'true');
+    frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;';
+    document.body.appendChild(frame);
+    const doc = frame.contentDocument;
+    if (!doc || !frame.contentWindow) {
+      frame.remove();
+      reject(new Error('PRINT'));
+      return;
+    }
+    doc.open();
+    doc.write(`<!doctype html><title>${title.replace(/[<>&]/g, '')}</title><style>@page{size:landscape;margin:0}html,body{margin:0}img{width:100%;display:block}</style><img alt="">`);
+    doc.close();
+    const image = doc.querySelector('img') as HTMLImageElement;
+    image.onload = () => {
+      frame.contentWindow?.focus();
+      frame.contentWindow?.print();
+      // Leave the frame long enough for the print dialog to read it.
+      setTimeout(() => frame.remove(), 60000);
+      resolve();
+    };
+    image.onerror = () => {
+      frame.remove();
+      reject(new Error('PRINT'));
+    };
+    image.src = src;
+  });
+}

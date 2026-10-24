@@ -3,6 +3,7 @@ import { Award, Banknote, ClipboardCheck, FolderOpen, Megaphone, Trash2 } from '
 import { useGym } from '../context/GymContext';
 import { mediaUrl } from '../services/gymApi';
 import { CertificateGenerator, ClubCertificateDetails } from './CertificateGenerator';
+import { downloadImage, printImage } from '../lib/certificate';
 
 type Note = { ok: boolean; message: string } | null;
 
@@ -19,7 +20,8 @@ const SectionTitle: React.FC<{ icon: React.ReactNode; children: React.ReactNode 
   </h2>
 );
 
-export const ClubOffice: React.FC = () => {
+/** `afterAttendance` is shown directly under the Attendance Register (the Practice Drills section). */
+export const ClubOffice: React.FC<{ afterAttendance?: React.ReactNode }> = ({ afterAttendance }) => {
   const {
     isStaff,
     userRole,
@@ -32,7 +34,9 @@ export const ClubOffice: React.FC = () => {
     publishNotice,
     deleteNotice,
     addDocument,
+    deleteDocument,
   } = useGym();
+  const [confirmDocument, setConfirmDocument] = useState<string | null>(null);
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [noticeTitle, setNoticeTitle] = useState('');
   const [noticeBody, setNoticeBody] = useState('');
@@ -133,6 +137,8 @@ export const ClubOffice: React.FC = () => {
         )}
       </section>
 
+      {afterAttendance}
+
       <section id="fee-reminders" className={SECTION}>
         <SectionTitle icon={<Banknote className="w-5 h-5" />}>Fee Reminders</SectionTitle>
         <p className="text-sm text-[#5C4A68]">Sent as a WhatsApp message to the telephone number saved on the gymnast's profile.</p>
@@ -229,12 +235,21 @@ export const ClubOffice: React.FC = () => {
         <ClubCertificateDetails />
         {certificates.length > 0 && <h3 className="text-sm text-[#3E1B4A] pt-2">Issued certificates</h3>}
         {certificates.length === 0 && <p className="text-sm text-[#5C4A68]">No certificates issued yet.</p>}
-        {certificates.map((item) => (
-          <p key={item.id} className="text-sm flex flex-wrap items-center justify-between gap-2 border-t border-[#F4EEF8] pt-2">
-            <span>{item.gymnastName} · {item.title} · {new Date(`${item.awardDate}T12:00:00`).toLocaleDateString()}</span>
-            <a href={mediaUrl(`/api/uploads/${item.uploadId}`)} target="_blank" rel="noreferrer" className="text-[#5C2A6E] underline">Open</a>
-          </p>
-        ))}
+        {certificates.map((item) => {
+          const src = mediaUrl(`/api/uploads/${item.uploadId}`);
+          const fileName = `${item.title} - ${item.gymnastName}.png`.replace(/[^\w.\- ]/g, '_');
+          return (
+            <div key={item.id} className="text-sm flex flex-wrap items-center justify-between gap-2 border-t border-[#F4EEF8] pt-2">
+              <span>{item.gymnastName} · {item.title} · {new Date(`${item.awardDate}T12:00:00`).toLocaleDateString()}</span>
+              <span className="flex gap-2">
+                <a href={src} target="_blank" rel="noreferrer" className="px-3 py-1.5 rounded-full border border-[#E4D7EE] text-[#3E1B4A]">Open</a>
+                <button type="button" onClick={() => downloadImage(src, fileName).catch(() => say('certificate', { ok: false, message: 'The certificate could not be downloaded. Try again.' }))} className="px-3 py-1.5 rounded-full border border-[#E4D7EE] text-[#3E1B4A]">Download</button>
+                <button type="button" onClick={() => printImage(src, fileName).catch(() => say('certificate', { ok: false, message: 'The certificate could not be opened for printing. Try Download, then print the file.' }))} className="px-3 py-1.5 rounded-full border border-[#E4D7EE] text-[#3E1B4A]">Print</button>
+              </span>
+            </div>
+          );
+        })}
+        <Message id="certificate" />
         {generating && <CertificateGenerator onClose={() => setGenerating(false)} />}
       </section>
 
@@ -253,10 +268,31 @@ export const ClubOffice: React.FC = () => {
         <Message id="document" />
         {documents.length > 0 && <h3 className="text-sm text-[#3E1B4A] pt-2">Uploaded documents</h3>}
         {documents.map((item) => (
-          <p key={item.id} className="text-sm flex flex-wrap justify-between gap-2">
-            <a href={mediaUrl(`/api/uploads/${item.uploadId}`)} target="_blank" rel="noreferrer" className="text-[#5C2A6E] underline">{item.name}</a>
-            <span className="text-xs text-[#5C4A68]">{new Date(item.uploadedAt).toLocaleDateString()}</span>
-          </p>
+          <div key={item.id} className="text-sm flex flex-wrap items-center justify-between gap-2 border-t border-[#F4EEF8] pt-2">
+            <a href={mediaUrl(`/api/uploads/${item.uploadId}`)} target="_blank" rel="noreferrer" className="text-[#5C2A6E] underline break-all">{item.name}</a>
+            <span className="flex items-center gap-2">
+              <span className="text-xs text-[#5C4A68]">{new Date(item.uploadedAt).toLocaleDateString()}</span>
+              {confirmDocument === item.id ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setConfirmDocument(null);
+                      await run('document', () => deleteDocument(item.id));
+                    }}
+                    className="px-3 py-1.5 rounded-full bg-red-700 text-white"
+                  >
+                    Delete for good
+                  </button>
+                  <button type="button" onClick={() => setConfirmDocument(null)} className="px-3 py-1.5 rounded-full border border-[#E4D7EE]">Keep</button>
+                </>
+              ) : (
+                <button type="button" onClick={() => setConfirmDocument(item.id)} className="p-2 rounded-full text-[#5C4A68] hover:text-red-700 hover:bg-[#F4EEF8]" aria-label={`Delete document ${item.name}`}>
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
+            </span>
+          </div>
         ))}
       </section>
     </div>

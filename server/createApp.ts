@@ -45,6 +45,18 @@ const VIDEO_EXT: Record<string, string> = {
 };
 export const MAX_VIDEO_BYTES = 80 * 1024 * 1024;
 export const MAX_DOCUMENT_BYTES = 10 * 1024 * 1024;
+/** Each piece of a large upload; well under Cloud Run's 32 MB request limit, and a multiple of 256 KB as Drive requires. */
+export const UPLOAD_PIECE_BYTES = 8 * 1024 * 1024;
+
+const EXT_MIME: Record<string, string> = { mp4: 'video/mp4', m4v: 'video/x-m4v', mov: 'video/quicktime', webm: 'video/webm', '3gp': 'video/3gpp' };
+
+/** The file type, falling back to the file name when the browser sends none or a generic one. */
+function fileMime(raw: string, name: string) {
+  const mime = raw.split(';')[0].trim().toLowerCase();
+  if (mime && mime !== 'application/octet-stream') return mime;
+  const ext = name.split('.').pop()?.toLowerCase() ?? '';
+  return EXT_MIME[ext] ?? mime;
+}
 
 const STATUS_BY_CODE: Record<string, number> = {
   FORBIDDEN: 403,
@@ -253,6 +265,16 @@ export async function createApp(options?: { dbPath?: string; databaseUrl?: strin
     } catch (error) {
       fail(res, error);
     }
+  }));
+
+  app.get('/api/inspo/post/:id', asyncRoute(async (req, res) => {
+    const viewer = await store.userByToken(bearer(req));
+    const post = store.postById(viewer, req.params.id);
+    if (!post) {
+      res.status(404).json({ code: 'NOT_FOUND' });
+      return;
+    }
+    res.json({ post });
   }));
 
   app.get('/api/inspo/liked', asyncRoute(async (req, res) => {
@@ -524,6 +546,23 @@ export async function createApp(options?: { dbPath?: string; databaseUrl?: strin
     }
   }));
 
+  app.delete('/api/club/documents/:id', asyncRoute(async (req, res) => {
+    const staff = await requireStaffAccount(req, res);
+    if (!staff) return;
+    let upload;
+    try {
+      upload = await store.deleteDocument(staff, req.params.id);
+    } catch (error) {
+      fail(res, error);
+      return;
+    }
+    // The record is gone either way; a Drive hiccup only leaves an orphaned file behind.
+    if (upload) {
+      await storage.remove(upload).catch((error) => console.error('Stored document could not be deleted', error instanceof Error ? error.message : error));
+    }
+    res.json({ ok: true });
+  }));
+
   app.post('/api/club/attendance', asyncRoute(async (req, res) => {
     const staff = await requireStaffAccount(req, res);
     if (!staff) return;
@@ -565,32 +604,111 @@ export async function createApp(options?: { dbPath?: string; databaseUrl?: strin
   }));
 
   // ---- Uploads ----
-  app.post('/api/uploads', express.raw({ type: () => true, limit: MAX_VIDEO_BYTES }), asyncRoute(async (req, res) => {
-    const user = await requirePaid(req, res);
-    if (!user) return;
-    const mime = String(req.header('content-type') || '').split(';')[0].trim().toLowerCase();
-    const body = req.body as Buffer;
-    if (!Buffer.isBuffer(body) || body.length === 0) {
+  /** Checks a file before it is stored. Sends the refusal and returns null when it is not allowed. */
+  function checkUpload(user: NonNullable<Awaited<ReturnType<typeof requirePaid>>>, req: Request, res: Response, rawMime: string, size: number) {
+    const displayName = String(req.query.name ?? 'upload').slice(0, 200);
+    const mime = fileMime(rawMime, displayName);
+    if (!size) {
       res.status(400).json({ code: 'EMPTY_FILE' });
-      return;
+      return null;
     }
     const isVideo = VIDEO_MIME.has(mime);
     const isDocument = mime in DOCUMENT_MIME;
     if (!isVideo && !isDocument) {
       res.status(415).json({ code: 'FILE_TYPE' });
-      return;
+      return null;
     }
     if (isDocument && !(user.role === 'CLUB_ADMIN' || user.role === 'COACH')) {
       res.status(403).json({ code: 'FORBIDDEN' });
-      return;
+      return null;
     }
-    if (isDocument && body.length > MAX_DOCUMENT_BYTES) {
+    if (size > (isDocument ? MAX_DOCUMENT_BYTES : MAX_VIDEO_BYTES)) {
       res.status(413).json({ code: 'FILE_TOO_LARGE' });
+      return null;
+    }
+    const scope: 'public' | 'private' = isVideo && req.query.scope === 'public' ? 'public' : 'private';
+    const fileName = `${randomBytes(12).toString('hex')}${isVideo ? VIDEO_EXT[mime] : DOCUMENT_MIME[mime]}`;
+    return { mime, scope, fileName, displayName };
+  }
+
+  // Cloud Run refuses any request over 32 MB, so a large video comes in pieces:
+  // start a session, then send each piece in order. The session is kept in the
+  // database so whichever server instance gets the next piece can carry on.
+  app.post('/api/uploads/sessions', asyncRoute(async (req, res) => {
+    const user = await requirePaid(req, res);
+    if (!user) return;
+    const size = Number(req.query.size);
+    if (!Number.isInteger(size) || size < 0) {
+      res.status(400).json({ code: 'SIZE' });
       return;
     }
-    const scope = isVideo && req.query.scope === 'public' ? 'public' : 'private';
-    const fileName = `${randomBytes(12).toString('hex')}${isVideo ? VIDEO_EXT[mime] : DOCUMENT_MIME[mime]}`;
-    const displayName = String(req.query.name ?? 'upload').slice(0, 200);
+    const checked = checkUpload(user, req, res, String(req.header('x-upload-content-type') || ''), size);
+    if (!checked) return;
+    let session: string;
+    try {
+      session = await storage.begin(checked.mime, checked.displayName, size, checked.fileName);
+    } catch (error) {
+      const code = error instanceof StorageError ? error.code : 'STORAGE_FAILED';
+      console.error('Upload could not be started', error instanceof Error ? error.message : error);
+      res.status(502).json({ code });
+      return;
+    }
+    const record = await store.startUploadSession({
+      ownerId: user.id,
+      clubId: user.clubId ?? user.selectedClubId ?? null,
+      scope: checked.scope,
+      mime: checked.mime,
+      name: checked.displayName,
+      size,
+      session,
+    });
+    res.status(201).json({ id: record.id, pieceSize: UPLOAD_PIECE_BYTES });
+  }));
+
+  app.put('/api/uploads/sessions/:id', express.raw({ type: () => true, limit: UPLOAD_PIECE_BYTES + 1024 }), asyncRoute(async (req, res) => {
+    const user = await requireAccount(req, res);
+    if (!user) return;
+    const session = store.uploadSessionById(req.params.id);
+    if (!session || session.ownerId !== user.id) {
+      res.status(404).json({ code: 'NOT_FOUND' });
+      return;
+    }
+    const piece = req.body as Buffer;
+    const offset = Number(req.query.offset);
+    // A repeated or out-of-order piece is refused with how much has arrived, so the page can carry on from there.
+    if (offset !== session.received) {
+      res.status(409).json({ code: 'OFFSET', received: session.received });
+      return;
+    }
+    if (!Buffer.isBuffer(piece) || piece.length === 0 || offset + piece.length > session.size) {
+      res.status(400).json({ code: 'PIECE' });
+      return;
+    }
+    let stored;
+    try {
+      stored = await storage.append(session.session, piece, offset, session.size);
+    } catch (error) {
+      const code = error instanceof StorageError ? error.code : 'STORAGE_FAILED';
+      console.error('Upload piece could not be stored', error instanceof Error ? error.message : error);
+      res.status(502).json({ code });
+      return;
+    }
+    if (!stored) {
+      await store.recordUploadProgress(session, offset + piece.length);
+      res.json({ received: session.received });
+      return;
+    }
+    const record = await store.finishUploadSession(session, stored);
+    res.status(201).json({ id: record.id, url: `/api/uploads/${record.id}`, size: record.size, mime: record.mime });
+  }));
+
+  app.post('/api/uploads', express.raw({ type: () => true, limit: MAX_VIDEO_BYTES }), asyncRoute(async (req, res) => {
+    const user = await requirePaid(req, res);
+    if (!user) return;
+    const body = req.body as Buffer;
+    const checked = checkUpload(user, req, res, String(req.header('content-type') || ''), Buffer.isBuffer(body) ? body.length : 0);
+    if (!checked) return;
+    const { mime, scope, fileName, displayName } = checked;
     let stored;
     try {
       stored = await storage.put(body, mime, displayName, fileName);

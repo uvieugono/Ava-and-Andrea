@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useGym } from '../context/GymContext';
 import { USAGLevel } from '../types';
-import { AVATAR_PRESETS } from '../data/gymData';
+import { Avatar } from '../components/Avatar';
+import { downloadImage, printImage } from '../lib/certificate';
 import { gymApi, InspoPost, mediaUrl } from '../services/gymApi';
 import { medalLabel } from '../components/ClubPrograms';
 import { 
@@ -26,6 +27,7 @@ import {
 export const ProfileScreen: React.FC = () => {
   const { user, updateUserProfile, saveProfile, logoutUser, setCurrentTab, awardXp, userRole, isStaff, notices, competitions, progress, drills, certificates } = useGym();
   const [videos, setVideos] = useState<InspoPost[]>([]);
+  const [savedVideos, setSavedVideos] = useState<InspoPost[]>([]);
   const [videoNote, setVideoNote] = useState<{ ok: boolean; text: string } | null>(null);
   const [confirmVideo, setConfirmVideo] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
@@ -46,6 +48,7 @@ export const ProfileScreen: React.FC = () => {
   useEffect(() => {
     gymApi.registeredClubs().then((result) => setClubs(result.clubs)).catch(() => setClubs([]));
     gymApi.myVideos().then((result) => setVideos(result.posts)).catch(() => setVideos([]));
+    gymApi.saved().then((result) => setSavedVideos(result.posts)).catch(() => setSavedVideos([]));
   }, []);
 
   // "Edit Profile" in the menu under the profile photo opens the form.
@@ -137,10 +140,10 @@ export const ProfileScreen: React.FC = () => {
         {/* Circular Avatar with Camera Quick Action */}
         <div className="relative group">
           <div className="w-28 h-28 sm:w-32 sm:h-32 rounded-full overflow-hidden ring-4 ring-[#5C2A6E]/30 border-4 border-white shadow-lg bg-[#F4EEF8]">
-            <img
+            <Avatar
               src={isEditing ? selectedAvatar : user.avatar}
-              alt={user.fullName}
-              className="w-full h-full object-cover transition-transform group-hover:scale-105"
+              name={user.fullName}
+              className="w-full h-full text-3xl transition-transform group-hover:scale-105"
             />
           </div>
 
@@ -294,37 +297,8 @@ export const ProfileScreen: React.FC = () => {
             </div>
 
             <p className="text-[11px] text-[#5C4A68]">
-              Select from inspiring African & international gymnast avatars or tap to upload your own picture:
+              Upload your own photo from your device or camera.
             </p>
-
-            <div className="grid grid-cols-4 sm:grid-cols-7 gap-2.5 pt-1">
-              {AVATAR_PRESETS.map((preset) => {
-                const isSelected = selectedAvatar === preset.url;
-                return (
-                  <button
-                    key={preset.id}
-                    type="button"
-                    onClick={() => setSelectedAvatar(preset.url)}
-                    className={`flex flex-col items-center gap-1 p-1 rounded-2xl transition-all ${
-                      isSelected
-                        ? 'ring-3 ring-[#5C2A6E] bg-[#F4EEF8] scale-105 shadow-sm'
-                        : 'hover:bg-gray-50 opacity-80 hover:opacity-100'
-                    }`}
-                  >
-                    <div className="w-12 h-12 rounded-full overflow-hidden border-2 border-white shadow-xs">
-                      <img
-                        src={preset.url}
-                        alt={preset.name}
-                        className="w-full h-full object-cover"
-                      />
-                    </div>
-                    <span className="text-[9px] font-bold text-[#241628] line-clamp-1 text-center">
-                      {preset.name.split(' ')[0]}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
           </div>
 
           {/* 2. LEVEL (read only: it moves up when the club approves every required skill) */}
@@ -486,7 +460,7 @@ export const ProfileScreen: React.FC = () => {
       {!isEditing && (
         <div id="profile-videos" className="w-full p-4 rounded-3xl bg-white border border-[#E4D7EE] shadow-xs text-left space-y-3 scroll-mt-20">
           <div className="flex items-center justify-between gap-3">
-            <h2 className="font-display text-xl text-[#3E1B4A]">My videos on Connect</h2>
+            <h2 className="font-display text-xl text-[#3E1B4A]">My Videos</h2>
             <button type="button" onClick={() => setCurrentTab('community')} className="text-sm text-[#5C2A6E] underline">Open Connect</button>
           </div>
           {videoNote && <p className={`text-sm ${videoNote.ok ? 'text-[#3E1B4A]' : 'text-red-600'}`} role={videoNote.ok ? 'status' : 'alert'}>{videoNote.text}</p>}
@@ -513,13 +487,26 @@ export const ProfileScreen: React.FC = () => {
               </article>
             ))}
           </div>
+          <h3 className="font-display text-lg text-[#3E1B4A] pt-3">Saved videos</h3>
+          {savedVideos.length === 0 && <p className="text-sm text-[#5C4A68]">Videos you save on Connect show here.</p>}
+          <div className="grid sm:grid-cols-2 gap-3">
+            {savedVideos.map((post) => (
+              <article key={post.id} className="rounded-2xl border border-[#E4D7EE] overflow-hidden">
+                <video src={mediaUrl(post.videoUrl)} controls preload="metadata" className="w-full aspect-video bg-black" />
+                <div className="p-3">
+                  <p className="text-sm text-[#241628]">{post.skill}</p>
+                  <p className="text-xs text-[#5C4A68]">{post.authorName}</p>
+                </div>
+              </article>
+            ))}
+          </div>
         </div>
       )}
 
       {/* DRILLS AND CERTIFICATES FROM THE CLUB */}
       {!isEditing && isGymnast && (
         <div id="profile-drills" className="w-full p-4 rounded-3xl bg-white border border-[#E4D7EE] shadow-xs text-left space-y-2 scroll-mt-20">
-          <h2 className="font-display text-xl text-[#3E1B4A]">Practice drills from my club</h2>
+          <h2 className="font-display text-xl text-[#3E1B4A]">My Drills</h2>
           {drills.length === 0 && <p className="text-[11px] text-[#5C4A68]">No drills assigned yet. Your club's drills show here.</p>}
           {drills.map((drill) => (
             <article key={drill.id} className="border-t border-[#E4D7EE] pt-2 space-y-0.5">
@@ -532,13 +519,22 @@ export const ProfileScreen: React.FC = () => {
               <p className="text-[10px] text-[#5C4A68]">{new Date(drill.createdAt).toLocaleDateString()} · {drill.createdBy}</p>
             </article>
           ))}
-          <h2 className="font-display text-xl text-[#3E1B4A] pt-3">My certificates</h2>
+        </div>
+      )}
+
+      {!isEditing && isGymnast && (
+        <div id="profile-certificates" className="w-full p-4 rounded-3xl bg-white border border-[#E4D7EE] shadow-xs text-left space-y-2 scroll-mt-20">
+          <h2 className="font-display text-xl text-[#3E1B4A]">My Certificates</h2>
           {certificates.length === 0 && <p className="text-[11px] text-[#5C4A68]">Certificates from your club show here.</p>}
           {certificates.map((item) => (
-            <p key={item.id} className="text-xs flex justify-between gap-2 border-t border-[#E4D7EE] pt-2">
+            <div key={item.id} className="text-xs flex flex-wrap items-center justify-between gap-2 border-t border-[#E4D7EE] pt-2">
               <span>{item.title} · {new Date(`${item.awardDate}T12:00:00`).toLocaleDateString()}</span>
-              <a href={mediaUrl(`/api/uploads/${item.uploadId}`)} target="_blank" rel="noreferrer" className="text-[#5C2A6E] underline">Open</a>
-            </p>
+              <span className="flex gap-3">
+                <a href={mediaUrl(`/api/uploads/${item.uploadId}`)} target="_blank" rel="noreferrer" className="text-[#5C2A6E] underline">Open</a>
+                <button type="button" className="text-[#5C2A6E] underline" onClick={() => downloadImage(mediaUrl(`/api/uploads/${item.uploadId}`), `${item.title}.png`).catch(() => undefined)}>Download</button>
+                <button type="button" className="text-[#5C2A6E] underline" onClick={() => printImage(mediaUrl(`/api/uploads/${item.uploadId}`), item.title).catch(() => undefined)}>Print</button>
+              </span>
+            </div>
           ))}
         </div>
       )}

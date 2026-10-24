@@ -59,7 +59,7 @@ test('login opens an account that never received a trial week', async () => {
   assert.ok(days > 6 && days < 8);
 });
 
-test('a club trial keeps a member in the app after their own week is cleared', async () => {
+test('a club member stays in the app without paying, even after the trials end', async () => {
   const db = emptyDb();
   const store = createBoundStore(db, async () => {});
   await store.registerClub({
@@ -75,7 +75,7 @@ test('a club trial keeps a member in the app after their own week is cleared', a
   if (!student) throw new Error('missing student');
   student.periodEnd = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const session = await store.login('ava-club@gym.test', 'ava-pass');
-  assert.equal(session.user.access, 'trial');
+  assert.equal(session.user.access, 'club');
   const post = {
     videoUrl: 'a.mp4',
     caption: 'hi',
@@ -86,7 +86,8 @@ test('a club trial keeps a member in the app after their own week is cleared', a
   // No parent approval step: a fake video link is refused for being invalid, not for a missing parent.
   await assert.rejects(() => store.createPost(student, post), /VIDEO_INVALID/);
   db.clubs[0].trialEndsAt = new Date(Date.now() - 1000).toISOString();
-  await assert.rejects(() => store.createPost(student, post), /PAYMENT_REQUIRED/);
+  // Club-affiliated gymnasts never need their own subscription.
+  await assert.rejects(() => store.createPost(student, post), /VIDEO_INVALID/);
 });
 
 test('club signup allocates paid students and a direct signup has no club', async () => {
@@ -131,8 +132,8 @@ test('club signup allocates paid students and a direct signup has no club', asyn
       body: JSON.stringify({ email: 'ava@gym.test', password: 'ava-pass-1' }),
     }));
     assert.equal(tooSoon.status, 200);
-    assert.equal(tooSoon.body.user.access, 'trial');
-    assert.equal(tooSoon.body.payment.amount, 2000);
+    assert.equal(tooSoon.body.user.access, 'club');
+    assert.equal(tooSoon.body.payment, null);
     const duringTrial = await json(await fetch(`${base}/api/inspo`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${tooSoon.body.token}` },
@@ -146,8 +147,9 @@ test('club signup allocates paid students and a direct signup has no club', asyn
       headers: { 'content-type': 'application/json', authorization: `Bearer ${tooSoon.body.token}` },
       body: JSON.stringify({ videoUrl: 'clip.mp4', caption: 'Try', skill: 'Cartwheel', category: 'Floor', visibility: 'everyone' }),
     }));
-    assert.equal(locked.status, 403);
-    assert.equal(locked.body.code, 'PAYMENT_REQUIRED');
+    // Still in after the trial: a club gymnast is never asked to pay.
+    assert.equal(locked.status, 400);
+    assert.equal(locked.body.code, 'VIDEO_INVALID');
 
     const paid = await json(await fetch(`${base}/api/payments/webhook`, {
       method: 'POST',

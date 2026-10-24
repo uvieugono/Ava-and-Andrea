@@ -6,8 +6,10 @@ import {
   CERTIFICATE_TEMPLATES,
   CertificateTemplate,
   canvasToBlob,
+  downloadImage,
   drawCertificate,
   loadImage,
+  printImage,
 } from '../lib/certificate';
 
 type Note = { ok: boolean; message: string } | null;
@@ -153,20 +155,25 @@ export const CertificateGenerator: React.FC<{ onClose: () => void }> = ({ onClos
 
   const fileName = `${title.trim() || 'certificate'} - ${gymnastName || 'gymnast'}.png`.replace(/[^\w.\- ]/g, '_');
 
-  const download = () => {
-    if (!preview.current) return;
-    const link = document.createElement('a');
-    link.href = preview.current.toDataURL('image/png');
-    link.download = fileName;
-    link.click();
+  // Download and print use the saved file, so what is printed is what the club keeps.
+  const savedSrc = saved ? mediaUrl(`/api/uploads/${saved}`) : null;
+
+  const download = async () => {
+    if (!savedSrc) return;
+    try {
+      await downloadImage(savedSrc, fileName);
+    } catch {
+      setNote({ ok: false, message: 'The certificate could not be downloaded. Check your connection and try again.' });
+    }
   };
 
-  const print = () => {
-    if (!preview.current) return;
-    const page = window.open('', '_blank');
-    if (!page) return setNote({ ok: false, message: 'Allow pop-ups to print, or download the certificate and print it.' });
-    page.document.write(`<!doctype html><title>${fileName}</title><style>@page{size:landscape;margin:0}body{margin:0}img{width:100%}</style><img src="${preview.current.toDataURL('image/png')}" onload="window.print()">`);
-    page.document.close();
+  const print = async () => {
+    if (!savedSrc) return;
+    try {
+      await printImage(savedSrc, fileName);
+    } catch {
+      setNote({ ok: false, message: 'The certificate could not be opened for printing. Try Download, then print the file.' });
+    }
   };
 
   return (

@@ -54,6 +54,8 @@ export const InspoScreen: React.FC = () => {
   const [openComments, setOpenComments] = useState<Record<string, boolean>>({});
   const [sharing, setSharing] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [sharedId, setSharedId] = useState(() => new URLSearchParams(window.location.search).get('video'));
+  const [shared, setShared] = useState<InspoPost | null>(null);
 
   const load = async (next = category, nextView = view) => {
     if (nextView === 'saved') return setPosts((await gymApi.saved()).posts);
@@ -70,6 +72,24 @@ export const InspoScreen: React.FC = () => {
   useEffect(() => {
     gymApi.registeredClubs().then((result) => setClubs(result.clubs)).catch(() => setClubs([]));
   }, []);
+
+  useEffect(() => {
+    if (!sharedId) {
+      setShared(null);
+      return;
+    }
+    gymApi.post(sharedId).then((result) => setShared(result.post)).catch(() => {
+      setShared(null);
+      setNotice({ ok: false, text: 'That shared video is not available to you. It may have been deleted, or shared with one club only.' });
+    });
+  }, [sharedId]);
+
+  const closeShared = () => {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('video');
+    window.history.replaceState(null, '', url.toString());
+    setSharedId(null);
+  };
 
   const say = (text: string, ok = true) => setNotice({ ok, text });
 
@@ -147,22 +167,22 @@ export const InspoScreen: React.FC = () => {
     }
   };
 
-  const shareText = (post: InspoPost) => `${post.authorName}: ${post.skill} on GymTrack Connect. ${window.location.origin}`;
+  /** The video's own address. Opening it signs in if needed, then shows this video on Connect. */
+  const shareLink = (post: InspoPost) => `${window.location.origin}/?video=${encodeURIComponent(post.id)}`;
+  const shareText = (post: InspoPost) => `${post.authorName}: ${post.skill} on GymTrack Connect`;
 
   const shareNative = async (post: InspoPost) => {
     if (!navigator.share) return;
-    await navigator.share({ title: post.skill, text: shareText(post) }).catch(() => undefined);
-    setSharing(null);
+    await navigator.share({ title: post.skill, text: shareText(post), url: shareLink(post) }).catch(() => undefined);
   };
 
   const copyLink = async (post: InspoPost) => {
     try {
-      await navigator.clipboard.writeText(shareText(post));
-      say('Copied. Paste it wherever you want to share it.');
+      await navigator.clipboard.writeText(shareLink(post));
+      say('Link copied. Paste it into any app or message.');
     } catch {
-      say('Could not copy. Select the text and copy it yourself.', false);
+      say('Could not copy automatically. Select the link and copy it.', false);
     }
-    setSharing(null);
   };
 
   const remove = async (post: InspoPost) => {
@@ -240,7 +260,13 @@ export const InspoScreen: React.FC = () => {
         </p>
       )}
 
-      {posts.map((post) => (
+      {shared && (
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm text-[#3E1B4A]">Shared with you</p>
+          <button type="button" onClick={closeShared} className="text-sm text-[#5C2A6E] underline">Close</button>
+        </div>
+      )}
+      {(shared ? [shared, ...posts.filter((item) => item.id !== shared.id)] : posts).map((post) => (
         <article key={post.id} className="bg-white rounded-2xl border border-[#E4D7EE] overflow-hidden">
           {post.videoUrl?.startsWith('data:video') || post.videoUrl?.startsWith('blob:') || post.videoUrl?.startsWith('/api/uploads/') || /\.(mp4|webm)(\?|$)/i.test(post.videoUrl || '') ? (
             <video src={mediaUrl(post.videoUrl)} controls preload="metadata" className="w-full aspect-video bg-black" />
@@ -281,26 +307,14 @@ export const InspoScreen: React.FC = () => {
                 {post.comments.length}
                 <span className="sr-only">comments</span>
               </button>
-              <div className="relative">
-                <button type="button" aria-expanded={sharing === post.id} onClick={() => setSharing(sharing === post.id ? null : post.id)} className={`${ICON_BUTTON} ${sharing === post.id ? ON : OFF}`}>
-                  <Share2 className="w-4 h-4" />
-                  Share
-                </button>
-                {sharing === post.id && (
-                  <div className="absolute z-20 mt-2 w-56 bg-white border border-[#E4D7EE] rounded-2xl shadow-lg p-2 text-sm">
-                    {typeof navigator !== 'undefined' && 'share' in navigator && (
-                      <button type="button" onClick={() => shareNative(post)} className="flex w-full items-center gap-2 px-3 py-2 rounded-xl hover:bg-[#F4EEF8]"><Share2 className="w-4 h-4" />Share to an app</button>
-                    )}
-                    <a href={`https://wa.me/?text=${encodeURIComponent(shareText(post))}`} target="_blank" rel="noreferrer" onClick={() => setSharing(null)} className="flex w-full items-center gap-2 px-3 py-2 rounded-xl hover:bg-[#F4EEF8]"><MessageCircle className="w-4 h-4" />WhatsApp</a>
-                    <button type="button" onClick={() => copyLink(post)} className="flex w-full items-center gap-2 px-3 py-2 rounded-xl hover:bg-[#F4EEF8]"><Copy className="w-4 h-4" />Copy link</button>
-                    <button type="button" onClick={() => setSharing(null)} className="flex w-full items-center gap-2 px-3 py-2 rounded-xl hover:bg-[#F4EEF8]"><X className="w-4 h-4" />Cancel</button>
-                  </div>
-                )}
-              </div>
+              <button type="button" aria-expanded={sharing === post.id} onClick={() => setSharing(sharing === post.id ? null : post.id)} className={`${ICON_BUTTON} ${sharing === post.id ? ON : OFF}`}>
+                <Share2 className="w-4 h-4" />
+                Share
+              </button>
               <button
                 type="button"
                 aria-pressed={post.saved}
-                onClick={() => gymApi.save(post.id).then(() => load()).catch(() => say('Sign in to save videos.', false))}
+                onClick={() => gymApi.save(post.id).then((result) => { const saved = (result as { post?: InspoPost }).post?.saved; say(saved ? 'Saved. Find it under My Videos on your profile, or the Saved tab here.' : 'Removed from your saved videos.'); return load(); }).catch(() => say('Sign in to save videos.', false))}
                 className={`${ICON_BUTTON} ${post.saved ? ON : OFF}`}
               >
                 <Bookmark className={`w-4 h-4 ${post.saved ? 'fill-current' : ''}`} />
@@ -337,6 +351,24 @@ export const InspoScreen: React.FC = () => {
                 )
               )}
             </div>
+
+            {sharing === post.id && (
+              <div className="space-y-2 border-t border-[#F4EEF8] pt-3 text-sm">
+                <label className="block text-[#5C4A68]" htmlFor={`share-${post.id}`}>Link to this video</label>
+                <div className="flex gap-2">
+                  <input id={`share-${post.id}`} readOnly value={shareLink(post)} onFocus={(event) => event.currentTarget.select()} className="flex-1 min-w-0 rounded-full border border-[#E4D7EE] px-3 py-2 text-sm bg-[#F7F4FB]" />
+                  <button type="button" onClick={() => copyLink(post)} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-[#5C2A6E] text-white"><Copy className="w-4 h-4" />Copy</button>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {typeof navigator !== 'undefined' && 'share' in navigator && (
+                    <button type="button" onClick={() => shareNative(post)} className={`${ICON_BUTTON} ${OFF}`}><Share2 className="w-4 h-4" />Share to an app</button>
+                  )}
+                  <a href={`https://wa.me/?text=${encodeURIComponent(`${shareText(post)} ${shareLink(post)}`)}`} target="_blank" rel="noreferrer" className={`${ICON_BUTTON} ${OFF}`}><MessageCircle className="w-4 h-4" />WhatsApp</a>
+                  <button type="button" onClick={() => setSharing(null)} className={`${ICON_BUTTON} ${OFF}`}><X className="w-4 h-4" />Close</button>
+                </div>
+                {post.visibility === 'club' && <p className="text-xs text-[#5C4A68]">Only {post.audienceClubName ?? 'the chosen club'} can open this link.</p>}
+              </div>
+            )}
 
             {openComments[post.id] && (
               <div className="space-y-2 border-t border-[#F4EEF8] pt-3">
@@ -379,9 +411,10 @@ export const InspoScreen: React.FC = () => {
             {draft.previewUrl && <video src={draft.previewUrl} controls className="w-full rounded-xl bg-black" />}
             {!previewing && (
               <>
-                <label className="block text-sm">
-                  <span className="block text-[#5C4A68] mb-1">Video (up to {MAX_VIDEO_MB} MB)</span>
-                  <input type="file" accept="video/*" onChange={(e) => onFile(e.target.files?.[0])} className="text-sm" />
+                <label className="flex items-center justify-center gap-2 w-full py-3 rounded-full bg-[#5C2A6E] text-white text-sm cursor-pointer hover:bg-[#3E1B4A] focus-within:ring-2 focus-within:ring-[#5C2A6E] focus-within:ring-offset-2">
+                  <Upload className="w-4 h-4" />
+                  Upload your video (up to {MAX_VIDEO_MB}MB)
+                  <input type="file" accept="video/*" onChange={(e) => onFile(e.target.files?.[0])} className="sr-only" />
                 </label>
                 {file && <p className="text-xs text-[#5C4A68]">{file.name} · {(file.size / (1024 * 1024)).toFixed(1)} MB</p>}
                 <input list="connect-skills" value={draft.skill} onChange={(e) => setDraft({ ...draft, skill: e.target.value })} placeholder="Skill" aria-label="Skill" className="w-full rounded-xl border border-[#E4D7EE] px-3 py-2 text-sm" />

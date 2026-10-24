@@ -32,6 +32,11 @@ export interface Stored {
 export interface Storage {
   kind: 'drive' | 'disk';
   put(data: Buffer, mime: string, name: string, diskName: string): Promise<Stored>;
+  /** Starts a file that arrives in pieces. Returns where the pieces go. */
+  begin(mime: string, name: string, size: number, diskName: string): Promise<string>;
+  /** Adds the next piece. Returns the stored file once the last piece is in, otherwise null. */
+  append(session: string, piece: Buffer, offset: number, size: number): Promise<Stored | null>;
+  remove(upload: UploadRecord): Promise<void>;
   send(upload: UploadRecord, req: Request, res: Response): Promise<void>;
 }
 
@@ -42,6 +47,17 @@ export function diskStorage(dir: string): Storage {
     async put(data, _mime, _name, diskName) {
       await fs.promises.writeFile(path.join(dir, diskName), data);
       return { file: diskName };
+    },
+    async begin(_mime, _name, _size, diskName) {
+      await fs.promises.writeFile(path.join(dir, diskName), Buffer.alloc(0));
+      return diskName;
+    },
+    async append(session, piece, offset, size) {
+      await fs.promises.appendFile(path.join(dir, session), piece);
+      return offset + piece.length >= size ? { file: session } : null;
+    },
+    async remove(upload) {
+      if (upload.file) await fs.promises.rm(path.join(dir, upload.file), { force: true });
     },
     async send(upload, _req, res) {
       const filePath = path.join(dir, upload.file ?? '');
@@ -85,24 +101,54 @@ export function driveStorage(folderId: string, token: TokenSource, fetcher: type
     }
   }
 
+  async function startSession(mime: string, name: string, size: number) {
+    const auth = await bearer();
+    const start = await fetcher(`${API}/upload/drive/v3/files?uploadType=resumable&supportsAllDrives=true&fields=id`, {
+      method: 'POST',
+      headers: {
+        ...auth,
+        'content-type': 'application/json; charset=UTF-8',
+        'x-upload-content-type': mime,
+        'x-upload-content-length': String(size),
+      },
+      body: JSON.stringify({ name, parents: [folderId], mimeType: mime }),
+    });
+    if (!start.ok) await failure(start, 'upload');
+    const session = start.headers.get('location');
+    if (!session) throw new StorageError('STORAGE_FAILED', 'Google Drive did not start the upload.');
+    return session;
+  }
+
   return {
     kind: 'drive',
+    begin(mime, name, size) {
+      return startSession(mime, name, size);
+    },
+    async append(session, piece, offset, size) {
+      // Drive's resumable upload: each piece says where it sits in the whole file.
+      const end = offset + piece.length - 1;
+      const response = await fetcher(session, {
+        method: 'PUT',
+        headers: { 'content-length': String(piece.length), 'content-range': `bytes ${offset}-${end}/${size}` },
+        body: piece,
+      });
+      if (response.status === 308) return null;
+      if (!response.ok) await failure(response, 'upload');
+      const created = (await response.json()) as { id?: string };
+      if (!created.id) throw new StorageError('STORAGE_FAILED', 'Google Drive did not return the file.');
+      return { driveFileId: created.id };
+    },
+    async remove(upload) {
+      if (!upload.driveFileId) return;
+      const response = await fetcher(`${API}/drive/v3/files/${encodeURIComponent(upload.driveFileId)}?supportsAllDrives=true`, {
+        method: 'DELETE',
+        headers: await bearer(),
+      });
+      if (!response.ok && response.status !== 404) await failure(response, 'delete');
+    },
     async put(data, mime, name) {
       // The file stays private on the signed-in account. No sharing permission is added.
-      const auth = await bearer();
-      const start = await fetcher(`${API}/upload/drive/v3/files?uploadType=resumable&supportsAllDrives=true&fields=id`, {
-        method: 'POST',
-        headers: {
-          ...auth,
-          'content-type': 'application/json; charset=UTF-8',
-          'x-upload-content-type': mime,
-          'x-upload-content-length': String(data.length),
-        },
-        body: JSON.stringify({ name, parents: [folderId], mimeType: mime }),
-      });
-      if (!start.ok) await failure(start, 'upload');
-      const session = start.headers.get('location');
-      if (!session) throw new StorageError('STORAGE_FAILED', 'Google Drive did not start the upload.');
+      const session = await startSession(mime, name, data.length);
       const done = await fetcher(session, {
         method: 'PUT',
         headers: { 'content-type': mime, 'content-length': String(data.length) },
