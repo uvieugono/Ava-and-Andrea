@@ -19,6 +19,8 @@ export interface SubmissionRecord {
   reviewedBy: string | null;
   createdAt: string;
   reviewedAt: string | null;
+  /** Approvals a coach later removed, oldest first. */
+  approvalHistory?: { approvedBy: string | null; approvedAt: string | null; comment: string; removedBy: string; removedAt: string }[];
 }
 
 export interface NoticeRecord {
@@ -393,6 +395,49 @@ export function createWorkflow(
       if (gymnast && decision === 'APPROVED') advanced = advanceIfComplete(gymnast);
       await save();
       return { submission, advanced, level: gymnast?.level ?? null };
+    },
+
+    /**
+     * A gymnast takes back their own video while it waits for the club. It leaves the
+     * approval queue for good. Returns the upload so the stored file can be deleted.
+     */
+    async withdrawSubmission(user: UserRecord, submissionId: string) {
+      const submission = db.submissions.find((item) => item.id === submissionId);
+      if (!submission || submission.gymnastId !== user.id) throw new Error('NOT_FOUND');
+      if (submission.status !== 'PENDING') throw new Error('NOT_PENDING');
+      db.submissions = db.submissions.filter((item) => item.id !== submissionId);
+      const upload = db.uploads.find((item) => `/api/uploads/${item.id}` === submission.videoUrl) ?? null;
+      if (upload) db.uploads = db.uploads.filter((item) => item.id !== upload.id);
+      await save();
+      return upload;
+    },
+
+    /**
+     * A coach of the club puts an approved video back to "awaiting approval". The video
+     * stays; the earlier decision is kept in approvalHistory. The gymnast's level is not
+     * moved back.
+     */
+    async removeApproval(staff: UserRecord, submissionId: string) {
+      const clubId = requireStaff(staff);
+      const submission = db.submissions.find((item) => item.id === submissionId);
+      if (!submission || submission.clubId !== clubId) throw new Error('NOT_FOUND');
+      if (submission.status !== 'APPROVED') throw new Error('NOT_APPROVED');
+      submission.approvalHistory = [
+        ...(submission.approvalHistory ?? []),
+        {
+          approvedBy: submission.reviewedBy,
+          approvedAt: submission.reviewedAt,
+          comment: submission.comment,
+          removedBy: staff.name,
+          removedAt: now().toISOString(),
+        },
+      ];
+      submission.status = 'PENDING';
+      submission.comment = '';
+      submission.reviewedBy = null;
+      submission.reviewedAt = null;
+      await save();
+      return submission;
     },
 
     mySubmissions(user: UserRecord) {
@@ -821,8 +866,8 @@ export function createWorkflow(
     },
 
     canReadUpload(user: UserRecord | null, upload: UploadRecord) {
-      if (upload.scope === 'public') return true;
       if (!user) return false;
+      if (upload.scope === 'public') return true;
       if (upload.ownerId === user.id) return true;
       if (isStaff(user) && upload.clubId && upload.clubId === user.clubId) return true;
       if (isStaff(user) && db.submissions.some((item) => item.videoUrl === `/api/uploads/${upload.id}` && item.clubId === user.clubId)) return true;

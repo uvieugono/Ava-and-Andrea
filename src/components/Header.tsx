@@ -26,7 +26,7 @@ function isActive(current: NavigationTab, id: NavigationTab) {
 }
 
 export const Header: React.FC = () => {
-  const { user, currentTab, setCurrentTab, isStaff, logoutUser } = useGym();
+  const { user, currentTab, setCurrentTab, isStaff, isOperator, logoutUser } = useGym();
   // The Club Dashboard is only for signed-in club accounts. Clubs do not see the gymnast pages.
   const items = NAV.filter((item) => (isStaff ? !GYMNAST_ONLY.includes(item.id) : item.id !== 'dashboard'));
   const [open, setOpen] = useState(false);
@@ -71,6 +71,7 @@ export const Header: React.FC = () => {
         ]),
     { id: 'profile', label: 'Club Noticeboard', anchor: 'profile-notices' },
     { id: 'clubs', label: 'Find a Club' },
+    ...(isOperator ? [{ id: 'operator' as NavigationTab, label: 'Club subscriptions' }] : []),
   ];
 
   const openItem = (item: (typeof profileMenu)[number]) => {

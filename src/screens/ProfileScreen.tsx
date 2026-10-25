@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useGym } from '../context/GymContext';
 import { USAGLevel } from '../types';
 import { Avatar } from '../components/Avatar';
+import { LinkedText } from '../components/LinkedText';
 import { downloadImage, printImage } from '../lib/certificate';
 import { gymApi, InspoPost, mediaUrl } from '../services/gymApi';
 import { medalLabel } from '../components/ClubPrograms';
@@ -511,8 +512,8 @@ export const ProfileScreen: React.FC = () => {
           {drills.map((drill) => (
             <article key={drill.id} className="border-t border-[#E4D7EE] pt-2 space-y-0.5">
               <h3 className="text-sm text-[#241628]">{drill.title}</h3>
-              {drill.description && <p className="text-xs text-[#5C4A68]">{drill.description}</p>}
-              {drill.instructions && <p className="text-xs text-[#241628] whitespace-pre-line">{drill.instructions}</p>}
+              {drill.description && <p className="text-xs text-[#5C4A68]"><LinkedText text={drill.description} /></p>}
+              {drill.instructions && <p className="text-xs text-[#241628] whitespace-pre-line"><LinkedText text={drill.instructions} /></p>}
               {drill.attachmentUploadId && (
                 <a href={mediaUrl(`/api/uploads/${drill.attachmentUploadId}`)} target="_blank" rel="noreferrer" className="text-xs text-[#5C2A6E] underline">Open attachment</a>
               )}

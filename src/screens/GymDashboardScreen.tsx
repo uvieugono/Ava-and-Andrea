@@ -6,6 +6,7 @@ import { ClubCompetitions, ClubDrills, DrillDialog, medalLabel } from '../compon
 import { RosterGymnast, CoachNote } from '../types';
 import { mediaUrl } from '../services/gymApi';
 import { Avatar } from '../components/Avatar';
+import { LinkedText } from '../components/LinkedText';
 import { 
   Building2, 
   Users, 
@@ -44,9 +45,11 @@ export const GymDashboardScreen: React.FC = () => {
     addCompetition,
     addCoachNote,
     reviewEvidenceSubmission,
+    removeApproval,
     userRole,
     drills,
   } = useGym();
+  const [confirmRemoval, setConfirmRemoval] = useState<string | null>(null);
   const [addingGymnast, setAddingGymnast] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -264,6 +267,32 @@ export const GymDashboardScreen: React.FC = () => {
         ) : (
           <div className="p-2.5 rounded-xl bg-[#F4EEF8] border border-[#E4D7EE] text-xs text-[#3E1B4A] space-y-0.5">
             <p><strong>{isApproved ? 'Approved' : 'Rejected'}{sub.reviewedBy ? ` by ${sub.reviewedBy}` : ''}:</strong> {sub.coachFeedback || 'No comment left.'}</p>
+            {isApproved && (
+              confirmRemoval === sub.id ? (
+                <span className="flex flex-wrap items-center gap-2 pt-1">
+                  <span>Put this video back to pending approval? The video is kept.</span>
+                  <button
+                    type="button"
+                    disabled={reviewBusyId === sub.id}
+                    onClick={async () => {
+                      setReviewBusyId(sub.id);
+                      const result = await removeApproval(sub.id);
+                      setReviewFeedback({ id: sub.id, ...result });
+                      setReviewBusyId(null);
+                      setConfirmRemoval(null);
+                    }}
+                    className="py-1 px-3 rounded-full bg-[#5C2A6E] text-white font-bold disabled:opacity-60"
+                  >
+                    Remove Approval
+                  </button>
+                  <button type="button" onClick={() => setConfirmRemoval(null)} className="py-1 px-3 rounded-full border border-[#E4D7EE]">Keep approval</button>
+                </span>
+              ) : (
+                <button type="button" onClick={() => setConfirmRemoval(sub.id)} className="mt-1 py-1 px-3 rounded-full border border-[#5C2A6E] text-[#5C2A6E] font-bold">
+                  Remove Approval
+                </button>
+              )
+            )}
             {note && <p className={note.ok ? 'text-emerald-800' : 'text-red-600'}>{note.message}</p>}
           </div>
         )}
@@ -741,8 +770,8 @@ export const GymDashboardScreen: React.FC = () => {
                       {gymnastDrills.map((drill) => (
                         <div key={drill.id} className="p-3.5 rounded-2xl bg-white border border-[#E4D7EE] shadow-xs space-y-1 text-xs">
                           <h5 className="font-black text-[#241628]">{drill.title}</h5>
-                          {drill.description && <p className="text-[#5C4A68]">{drill.description}</p>}
-                          {drill.instructions && <p className="text-[#241628] whitespace-pre-line">{drill.instructions}</p>}
+                          {drill.description && <p className="text-[#5C4A68]"><LinkedText text={drill.description} /></p>}
+                          {drill.instructions && <p className="text-[#241628] whitespace-pre-line"><LinkedText text={drill.instructions} /></p>}
                           {drill.attachmentUploadId && (
                             <a href={mediaUrl(`/api/uploads/${drill.attachmentUploadId}`)} target="_blank" rel="noreferrer" className="text-[#5C2A6E] underline">Open attachment</a>
                           )}

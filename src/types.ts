@@ -49,6 +49,8 @@ export interface Skill {
   gymfestTier?: 'SILVER' | 'GOLD' | 'PLATINUM';
   /** Listed for the level but not needed to move up. */
   optional?: boolean;
+  /** The gymnast's latest video for this skill, when there is one. */
+  submissionId?: string;
 }
 
 export interface SkillsGapReviewItem {
@@ -201,7 +203,8 @@ export type NavigationTab =
   | 'contact'
   | 'profile' 
   | 'community' 
-  | 'shop';
+  | 'shop'
+  | 'operator';
 
 export interface UserProfile {
   id: string;

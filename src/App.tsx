@@ -18,9 +18,10 @@ import { readAccess } from './services/gymApi';
 import { ClubsScreen } from './screens/ClubsScreen';
 import { GymDashboardScreen } from './screens/GymDashboardScreen';
 import { PageSketch } from './components/GymnastSketch';
+import { OperatorScreen } from './screens/OperatorScreen';
 
 const MainApp: React.FC = () => {
-  const { user, ready, currentTab: selectedTab, userRole, isStaff, logoutUser } = useGym();
+  const { user, ready, currentTab: selectedTab, userRole, isStaff, isOperator, logoutUser } = useGym();
   // Club accounts never see the gymnast pages (Home, Skills, My Progress).
   const currentTab = isStaff && (selectedTab === 'home' || selectedTab === 'skills' || selectedTab === 'progress') ? 'dashboard' : selectedTab;
   const [paidOpen, setPaidOpen] = useState(false);
@@ -41,7 +42,8 @@ const MainApp: React.FC = () => {
   if (!user.isLoggedIn) return <AuthScreen />;
 
   const access = readAccess();
-  const needsPayment = !paidOpen && (access.status === 'locked' || access.status === 'pending_payment');
+  // Gymnasts are free. Only a club account whose trial has ended without a subscription is asked to pay.
+  const needsPayment = isStaff && !paidOpen && (access.status === 'locked' || access.status === 'pending_payment');
   const clubTrialLabel = access.until
     ? new Date(access.until).toLocaleDateString(undefined, { day: 'numeric', month: 'long' })
     : null;
@@ -74,6 +76,7 @@ const MainApp: React.FC = () => {
             {currentTab === 'community' && <InspoScreen />}
             {currentTab === 'shop' && <ShopScreen />}
             {currentTab === 'profile' && <ProfileScreen />}
+            {currentTab === 'operator' && isOperator && <OperatorScreen />}
           </>
         )}
         <PageSketch page={currentTab} />

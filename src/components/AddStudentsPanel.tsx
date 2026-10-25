@@ -51,7 +51,7 @@ export const AddStudentsPanel: React.FC = () => {
     <section id="add-student-panel" className="pt-2">
       <form onSubmit={submit} className="bg-[#F4EEF8] border border-[#E4D7EE] rounded-2xl p-4 space-y-2">
         <h2 className="font-display text-xl text-[#3E1B4A]">Add a Gymnast</h2>
-        <p className="text-xs text-[#5C4A68]">They can sign in and use GymTrack during your club's free week. After that, each student is ₦1,000 a month.</p>
+        <p className="text-xs text-[#5C4A68]">They can sign in straight away. GymTrack is free for gymnasts.</p>
         <div className="grid sm:grid-cols-2 gap-2">
           <input required value={name} onChange={(e) => setName(e.target.value)} placeholder="Student name" className="rounded-2xl border border-[#E4D7EE] px-3 py-2 text-sm" />
           <input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" className="rounded-2xl border border-[#E4D7EE] px-3 py-2 text-sm" />

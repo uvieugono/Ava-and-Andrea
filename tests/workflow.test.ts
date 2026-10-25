@@ -298,10 +298,13 @@ test('connect: a child publishes with no parent step, and the video is kept and 
     assert.equal(posted.status, 201);
     assert.equal(posted.body.post.authorId, ava.id);
 
-    // Still there for everyone, signed in or not, and the file plays
-    const feed = await t.call('GET', '/api/inspo?category=All');
+    // Every signed-in user sees it and the file plays; signed-out visitors get neither
+    const club2 = await t.club('Beta Club', 'beta6@club.test');
+    const feed = await t.call('GET', '/api/inspo?category=All', club2.token);
     assert.equal(feed.body.posts[0].videoUrl, stored.body.url);
-    const file = await fetch(`${t.base}${stored.body.url}`);
+    assert.equal((await t.call('GET', '/api/inspo?category=All')).body.posts.length, 0);
+    assert.equal((await fetch(`${t.base}${stored.body.url}`)).status, 401);
+    const file = await fetch(`${t.base}${stored.body.url}`, { headers: { authorization: `Bearer ${club2.token}` } });
     assert.equal(file.status, 200);
     assert.equal(file.headers.get('content-type'), 'video/mp4');
     assert.equal((await file.arrayBuffer()).byteLength, 2_000_000);
