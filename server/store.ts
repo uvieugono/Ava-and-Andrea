@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { GYM_EVENTS } from '../src/data/gymData.ts';
 import { INITIAL_REGISTERED_CLUBS } from '../src/data/gymManagementData.ts';
+import { operatorEmails } from './operators.ts';
 import {
   createWorkflow,
   type AttendanceRecord,
@@ -70,6 +71,10 @@ export interface ClubRecord {
   country: string;
   adminUserId: string;
   trialEndsAt?: string | null;
+  /** When the club's one seven-day trial began. */
+  trialStartedAt?: string | null;
+  /** Inferred from trialEndsAt for clubs created before the start date was recorded. */
+  trialStartInferred?: boolean;
   /** Shown on certificates. */
   coachName?: string | null;
   logoUploadId?: string | null;
@@ -146,6 +151,22 @@ export interface DatabaseShape {
   certificates: CertificateRecord[];
   drills: DrillRecord[];
   uploadSessions: UploadSessionRecord[];
+  /** Club subscriptions switched on by an operator after checking the bank transfer. Never edited or removed. */
+  clubSubscriptions: ClubSubscriptionRecord[];
+}
+
+export interface ClubSubscriptionRecord {
+  id: string;
+  clubId: string;
+  startsAt: string;
+  endsAt: string;
+  months: number;
+  amountNgn: number;
+  /** What the operator checked: the transfer receipt or bank reference. */
+  reference: string;
+  note: string;
+  activatedBy: string;
+  activatedAt: string;
 }
 
 const CITY_COORDS: Record<string, [number, number]> = {
@@ -178,6 +199,7 @@ export function emptyDb(): DatabaseShape {
     certificates: [],
     drills: [],
     uploadSessions: [],
+    clubSubscriptions: [],
   };
 }
 
@@ -268,9 +290,11 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
       offersBeam: user.offersBeam !== false,
       progress: user.role === 'GYMNAST' ? workflow.progressFor(user) : null,
       status: user.status,
-      periodEnd: clubAffiliated(user) ? null : accessUntil(user),
+      periodEnd: user.role === 'GYMNAST' ? null : accessUntil(user),
       clubTrialEndsAt: clubTrialEnd(user),
-      access: clubAffiliated(user) ? 'club' : accessOpen(user) ? (user.status === 'active' ? 'paid' : 'trial') : 'locked',
+      access: accessLabel(user),
+      club: clubBilling(user),
+      operator: isOperator(user),
       age: user.showAge ? age : null,
       showLevel: user.showLevel,
       under18: age !== null && age < 18,
@@ -305,7 +329,8 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
   }
 
   function paymentFor(user: UserRecord) {
-    if (clubAffiliated(user)) return null;
+    // Gymnasts never pay. Clubs pay by bank transfer, checked by an operator (see clubBilling).
+    if (user.role === 'GYMNAST' || clubFor(user)) return null;
     const payment = db.payments.find((item) => item.status === 'pending' && item.studentIds.includes(user.id));
     return payment ? paymentView(payment) : null;
   }
@@ -318,8 +343,31 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
     return clubFor(user)?.trialEndsAt ?? null;
   }
 
+  /** The latest end date of the club's activated subscriptions, or null. */
+  function clubPaidUntil(club: ClubRecord | null) {
+    if (!club) return null;
+    const ends = db.clubSubscriptions.filter((item) => item.clubId === club.id).map((item) => item.endsAt).sort();
+    return ends.at(-1) ?? null;
+  }
+
+  /** Trial, subscription and price for a club account's payment prompt. */
+  function clubBilling(user: UserRecord) {
+    const club = clubFor(user);
+    if (!club || user.role === 'GYMNAST') return null;
+    const paidUntil = clubPaidUntil(club);
+    return {
+      id: club.id,
+      name: club.name,
+      trialStartedAt: club.trialStartedAt ?? null,
+      trialEndsAt: club.trialEndsAt ?? null,
+      paidUntil,
+      subscriptionActive: Boolean(paidUntil && new Date(paidUntil).getTime() > now().getTime()),
+      monthlyFeeNgn: MONTHLY_FEE_NGN,
+    };
+  }
+
   function accessUntil(user: UserRecord) {
-    const times = [user.periodEnd, clubTrialEnd(user)]
+    const times = [user.periodEnd, clubTrialEnd(user), clubPaidUntil(clubFor(user))]
       .filter((value): value is string => Boolean(value))
       .map((value) => new Date(value).getTime())
       .filter((value) => !Number.isNaN(value));
@@ -327,20 +375,27 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
     return new Date(Math.max(...times)).toISOString();
   }
 
-  /**
-   * A gymnast who belongs to or chose a registered club uses the app through the
-   * club, so they never need their own subscription. Only gymnasts with no club pay.
-   */
-  function clubAffiliated(user: UserRecord) {
-    if (user.role !== 'GYMNAST') return false;
-    const clubId = user.clubId ?? user.selectedClubId ?? null;
-    return Boolean(clubId && db.clubs.some((item) => item.id === clubId));
+  /** Operators check club bank transfers and switch subscriptions on (GYMTRACK_OPERATOR_EMAILS). */
+  function isOperator(user: UserRecord) {
+    return operatorEmails().includes(user.email.toLowerCase());
   }
 
+  /**
+   * Gymnasts always use GymTrack free, with or without a club, and never expire.
+   * Club accounts are open during the club's trial and while a subscription is active.
+   */
   function accessOpen(user: UserRecord) {
-    if (clubAffiliated(user)) return true;
+    if (user.role === 'GYMNAST') return true;
     const until = accessUntil(user);
     return Boolean(until && new Date(until).getTime() > now().getTime());
+  }
+
+  function accessLabel(user: UserRecord) {
+    if (user.role === 'GYMNAST') return 'free';
+    if (!accessOpen(user)) return 'locked';
+    const billing = clubBilling(user);
+    if (billing?.subscriptionActive || user.status === 'active') return 'paid';
+    return 'trial';
   }
 
   function startTrial(user: UserRecord) {
@@ -357,6 +412,12 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
       club.trialEndsAt = personalOpen ? user.periodEnd : new Date(now().getTime() + TRIAL_MS).toISOString();
       changed = true;
     }
+    if (!club.trialStartedAt) {
+      // Clubs from before the start date was kept: their trial was seven days long, so it began a week before it ended.
+      club.trialStartedAt = new Date(new Date(club.trialEndsAt).getTime() - TRIAL_MS).toISOString();
+      club.trialStartInferred = true;
+      changed = true;
+    }
     if (user.role === 'CLUB_ADMIN' && user.status !== 'active') {
       const trialEnd = new Date(club.trialEndsAt).getTime();
       const personalEnd = user.periodEnd ? new Date(user.periodEnd).getTime() : 0;
@@ -370,6 +431,8 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
   }
 
   async function ensureTrial(user: UserRecord) {
+    // Gymnasts are free: no trial, no payment.
+    if (user.role === 'GYMNAST') return;
     await ensureClubTrial(user);
     if (user.periodEnd) return;
     startTrial(user);
@@ -415,21 +478,12 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
         periodEnd: null,
         selectedClubId: !clubId && student.selectedClubId && db.clubs.some((item) => item.id === student.selectedClubId) ? student.selectedClubId : null,
       };
-      startTrial(user);
+      // Gymnasts use GymTrack free: no trial to run out and no payment to open.
       db.users.push(user);
       created.push(user);
     }
-    const payment: PaymentRecord = {
-      reference: `GT-${randomBytes(3).toString('hex').toUpperCase()}`,
-      amount: MONTHLY_FEE_NGN * created.length,
-      studentIds: created.map((item) => item.id),
-      status: 'pending',
-      transferId: null,
-      clubId,
-    };
-    db.payments.push(payment);
     await save();
-    return { payment: paymentView(payment), students: created.map(publicUser) };
+    return { payment: null, students: created.map(publicUser) };
   }
 
   function notify(userId: string, kind: NotificationRecord['kind'], fromUserId: string, postId: string | null) {
@@ -451,11 +505,16 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
     );
   }
 
+  /**
+   * "All Clubs" videos: every registered user. "Specific Club" videos: only that club's
+   * members (its staff, and gymnasts who belong to or chose it) and the author.
+   * Signed-out visitors see none.
+   */
   function canSeePost(viewer: UserRecord | null, post: InspoPost) {
-    if (viewer && viewer.id !== post.authorId && isBlocked(viewer.id, post.authorId)) return false;
-    if (post.visibility === 'everyone') return true;
     if (!viewer) return false;
+    if (viewer.id !== post.authorId && isBlocked(viewer.id, post.authorId)) return false;
     if (viewer.id === post.authorId) return true;
+    if (post.visibility === 'everyone') return true;
     if (post.visibility === 'club') {
       const audience = post.audienceClubId ?? db.users.find((item) => item.id === post.authorId)?.clubId ?? null;
       const viewerClub = viewer.clubId ?? viewer.selectedClubId ?? null;
@@ -512,6 +571,7 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
         country: 'Nigeria',
         adminUserId: '',
         trialEndsAt: null,
+        trialStartedAt: now().toISOString(),
       };
       const admin: UserRecord = {
         id: id('usr'),
@@ -552,12 +612,6 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
       const created = await createPendingStudents([input], null);
       const record = db.users.find((item) => item.id === created.students[0]?.id);
       if (!record) throw new Error('ERROR');
-      // A gymnast who chose a club does not pay, so no payment is opened for them.
-      if (clubAffiliated(record)) {
-        db.payments = db.payments.filter((item) => item.reference !== created.payment.reference);
-        await save();
-        return { ...created, payment: null, token: await issueToken(record.id), user: publicUser(record) };
-      }
       return { ...created, token: await issueToken(record.id), user: publicUser(record) };
     },
 
@@ -755,6 +809,64 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
       }
       await save();
       return presentPost(post, user);
+    },
+
+    /** Every club with its trial, subscription history and admin contact. Operators only. */
+    operatorClubs(operator: UserRecord) {
+      if (!isOperator(operator)) throw new Error('FORBIDDEN');
+      return db.clubs.map((club) => {
+        const admin = db.users.find((item) => item.id === club.adminUserId);
+        const paidUntil = clubPaidUntil(club);
+        const legacyPaid = admin && admin.status === 'active' && admin.periodEnd && new Date(admin.periodEnd).getTime() > now().getTime() ? admin.periodEnd : null;
+        const trialActive = Boolean(club.trialEndsAt && new Date(club.trialEndsAt).getTime() > now().getTime());
+        const subscriptionActive = Boolean(paidUntil && new Date(paidUntil).getTime() > now().getTime());
+        return {
+          id: club.id,
+          name: club.name,
+          city: club.city,
+          adminName: admin?.name ?? '',
+          adminEmail: admin?.email ?? '',
+          adminPhone: admin?.phone ?? '',
+          trialStartedAt: club.trialStartedAt ?? null,
+          trialStartInferred: Boolean(club.trialStartInferred),
+          trialEndsAt: club.trialEndsAt ?? null,
+          paidUntil: paidUntil ?? legacyPaid,
+          status: subscriptionActive || legacyPaid ? 'paid' : trialActive ? 'trial' : 'expired',
+          subscriptions: db.clubSubscriptions.filter((item) => item.clubId === club.id).sort((a, b) => b.activatedAt.localeCompare(a.activatedAt)),
+        };
+      });
+    },
+
+    /**
+     * Switches a club's subscription on after the operator has checked the bank transfer.
+     * Adds a record; earlier records and payments are never changed.
+     */
+    async activateClubSubscription(operator: UserRecord, clubId: string, input: { months?: number; reference?: string; note?: string }) {
+      if (!isOperator(operator)) throw new Error('FORBIDDEN');
+      const club = db.clubs.find((item) => item.id === clubId);
+      if (!club) throw new Error('NOT_FOUND');
+      const months = Number(input.months ?? 1);
+      if (!Number.isInteger(months) || months < 1 || months > 12) throw new Error('MONTHS');
+      const reference = String(input.reference ?? '').trim();
+      if (!reference) throw new Error('REFERENCE_REQUIRED');
+      // A renewal starts when the current period ends, so no paid days are lost.
+      const current = clubPaidUntil(club);
+      const start = Math.max(now().getTime(), current ? new Date(current).getTime() : 0);
+      const record: ClubSubscriptionRecord = {
+        id: id('sub'),
+        clubId,
+        startsAt: new Date(start).toISOString(),
+        endsAt: new Date(start + months * MONTH_MS).toISOString(),
+        months,
+        amountNgn: MONTHLY_FEE_NGN * months,
+        reference: reference.slice(0, 200),
+        note: String(input.note ?? '').trim().slice(0, 1000),
+        activatedBy: operator.email,
+        activatedAt: now().toISOString(),
+      };
+      db.clubSubscriptions.push(record);
+      await save();
+      return record;
     },
 
     /** One video, for a shared link. Only if the viewer is allowed to see it. */

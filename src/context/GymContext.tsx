@@ -113,6 +113,9 @@ interface GymContextType {
 
   // Skills
   submitSkillVideo: (skillId: string, file: File) => Promise<ActionResult>;
+  withdrawSkillVideo: (submissionId: string) => Promise<ActionResult>;
+  removeApproval: (submissionId: string) => Promise<ActionResult>;
+  isOperator: boolean;
   updateSkillTutorial: (skillId: string, tutorial: YouTubeTutorial) => void;
 
   // Workouts
@@ -265,6 +268,7 @@ export const GymProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [celebrationBadge, setCelebrationBadge] = useState<AchievementBadge | null>(null);
   const levelRef = useRef<number | null>(null);
 
+  const [isOperator, setIsOperator] = useState(false);
   const isStaff = user.isLoggedIn && (user.role === 'CLUB_ADMIN' || user.role === 'COACH') && Boolean(user.clubId);
   const userRole: UserRole = user.role ?? 'GYMNAST';
 
@@ -284,6 +288,7 @@ export const GymProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return {
           ...skill,
           status: SERVER_TO_SKILL[state.status],
+          submissionId: state.submissionId,
           verifiedNote: state.comment || undefined,
           verifiedBy: state.status === 'APPROVED' ? 'Your club' : undefined,
           videoPreviewUrl: state.videoUrl ? mediaUrl(state.videoUrl) : undefined,
@@ -327,6 +332,7 @@ export const GymProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setProgress(null);
     }
     applyServerUser(next);
+    setIsOperator(Boolean(next.operator));
     // Keep the access state current, e.g. a gymnast who chooses a club stops needing to pay.
     const access = readAccess();
     setAccess(next.access ?? next.status, me.payment, access.devMatch, next.periodEnd ?? null);
@@ -351,6 +357,7 @@ export const GymProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setCompetitions([]);
     setMyCertificates([]);
     setMyDrills([]);
+    setIsOperator(Boolean(api.operator));
     setUser({ ...toProfile(api), xp: 0 });
     // A shared video link (?video=…) opens Connect on that video.
     const sharedVideo = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('video');
@@ -369,6 +376,7 @@ export const GymProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setCompetitions([]);
     setMyCertificates([]);
     setMyDrills([]);
+    setIsOperator(false);
     setTab('home');
   }, []);
 
@@ -476,6 +484,31 @@ export const GymProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (error instanceof UploadError) return { ok: false, message: error.message };
       const code = errorCode(error);
       return { ok: false, message: SUBMIT_MESSAGES[code] ?? 'The skill could not be submitted. Try again.' };
+    }
+  };
+
+  const withdrawSkillVideo: GymContextType['withdrawSkillVideo'] = async (submissionId) => {
+    try {
+      const result = await gymApi.withdrawSubmission(submissionId);
+      setSkillStates(result.statuses);
+      setProgress(result.progress);
+      return { ok: true, message: 'Video deleted. Your club will not see it. You can send a new one.' };
+    } catch (error) {
+      const code = errorCode(error);
+      if (code === 'NOT_PENDING') return { ok: false, message: 'Your club has already decided on this video, so it cannot be deleted now.' };
+      return { ok: false, message: 'The video could not be deleted. Try again.' };
+    }
+  };
+
+  const removeApproval: GymContextType['removeApproval'] = async (submissionId) => {
+    try {
+      await gymApi.removeApproval(submissionId);
+      await refreshOverview();
+      return { ok: true, message: 'Approval removed. The video is back in the approval queue.' };
+    } catch (error) {
+      const code = errorCode(error);
+      if (code === 'NOT_APPROVED') return { ok: false, message: 'This video is not approved, so there is no approval to remove.' };
+      return { ok: false, message: 'The approval could not be removed. Try again.' };
     }
   };
 
@@ -917,6 +950,9 @@ export const GymProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         pendingSkillId,
         openSkill,
         submitSkillVideo,
+        withdrawSkillVideo,
+        removeApproval,
+        isOperator,
         updateSkillTutorial,
         completeWorkout,
         toggleEventCalendar,

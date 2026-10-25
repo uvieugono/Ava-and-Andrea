@@ -185,7 +185,7 @@ export const AuthScreen: React.FC = () => {
           <input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" className={FIELD} />
           <PasswordInput required value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" className={FIELD} />
           {action === 'register' && who === 'student' && (
-            <p className="text-xs text-[#5C4A68]">Choose your club and GymTrack is free for you; your club reviews your skills. Without a club, you get one free week, then it is ₦1,000 a month.</p>
+            <p className="text-xs text-[#5C4A68]">GymTrack is free for gymnasts. Choose your club and it reviews your skills.</p>
           )}
           {action === 'register' && who === 'club' && (
             <p className="text-xs text-[#5C4A68]">Your club gets 7 days to use every part of GymTrack before you pay. After that, the office is ₦1,000 a month.</p>

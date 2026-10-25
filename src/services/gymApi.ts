@@ -16,7 +16,7 @@ export function setToken(token: string | null) {
 
 export function setAccess(status: string, payment: PaymentInstructions | null, devMatch = false, periodEnd: string | null = null) {
   sessionStorage.setItem(STATUS_KEY, status);
-  if (status !== 'paid' && status !== 'active' && status !== 'club' && payment) sessionStorage.setItem(DUE_KEY, JSON.stringify(payment));
+  if (status !== 'paid' && status !== 'active' && status !== 'club' && status !== 'free' && payment) sessionStorage.setItem(DUE_KEY, JSON.stringify(payment));
   else sessionStorage.removeItem(DUE_KEY);
   sessionStorage.setItem(DEV_KEY, devMatch ? '1' : '0');
   if (periodEnd) sessionStorage.setItem(UNTIL_KEY, periodEnd);
@@ -107,6 +107,31 @@ export interface CompetitionView {
   medal?: '' | 'gold' | 'silver' | 'bronze';
 }
 
+export interface ClubBilling {
+  id: string;
+  name: string;
+  trialStartedAt: string | null;
+  trialEndsAt: string | null;
+  paidUntil: string | null;
+  subscriptionActive: boolean;
+  monthlyFeeNgn: number;
+}
+
+export interface OperatorClub {
+  id: string;
+  name: string;
+  city: string;
+  adminName: string;
+  adminEmail: string;
+  adminPhone: string;
+  trialStartedAt: string | null;
+  trialStartInferred: boolean;
+  trialEndsAt: string | null;
+  paidUntil: string | null;
+  status: 'trial' | 'paid' | 'expired';
+  subscriptions: { id: string; startsAt: string; endsAt: string; months: number; amountNgn: number; reference: string; note: string; activatedBy: string; activatedAt: string }[];
+}
+
 export interface ClubDetails {
   name: string;
   coachName: string;
@@ -189,8 +214,12 @@ export interface ApiUser {
   clubId: string | null;
   clubName: string | null;
   status: string;
-  /** 'club': the gymnast belongs to or chose a club, so they never pay themselves. */
-  access?: 'trial' | 'paid' | 'locked' | 'club';
+  /** 'free': gymnasts never pay. Club accounts: 'trial', then 'paid' or 'locked'. */
+  access?: 'trial' | 'paid' | 'locked' | 'club' | 'free';
+  /** Club accounts: the club's trial, subscription and monthly price. */
+  club?: ClubBilling | null;
+  /** May check club bank transfers and switch subscriptions on. */
+  operator?: boolean;
   periodEnd?: string | null;
 }
 
@@ -279,6 +308,12 @@ export const gymApi = {
       method: 'POST',
       body: JSON.stringify({ gymnastId, message }),
     }),
+  withdrawSubmission: (id: string) =>
+    request<{ ok: boolean; statuses: Record<string, SkillState>; progress: Progress }>(`/api/skills/submissions/${id}`, { method: 'DELETE' }),
+  removeApproval: (id: string) => request<{ submission: SubmissionView }>(`/api/club/submissions/${id}/remove-approval`, { method: 'POST' }),
+  operatorClubs: () => request<{ clubs: OperatorClub[] }>('/api/operator/clubs'),
+  activateClub: (id: string, input: { months: number; reference: string; note: string }) =>
+    request<{ subscription: OperatorClub['subscriptions'][number] }>(`/api/operator/clubs/${id}/activate`, { method: 'POST', body: JSON.stringify(input) }),
   deleteDocument: (id: string) => request<{ ok: boolean }>(`/api/club/documents/${id}`, { method: 'DELETE' }),
   deleteNotice: (id: string) => request<{ ok: boolean }>(`/api/club/notices/${id}`, { method: 'DELETE' }),
   updateClubDetails: (input: { coachName?: string; logoUploadId?: string | null; signatureUploadId?: string | null }) =>

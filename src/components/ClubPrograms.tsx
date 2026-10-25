@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Dumbbell, Medal, Trophy, X } from 'lucide-react';
 import { useGym } from '../context/GymContext';
+import { LinkedText } from './LinkedText';
 import { CompetitionView, mediaUrl } from '../services/gymApi';
 
 type Note = { ok: boolean; message: string } | null;
@@ -108,8 +109,8 @@ export const ClubDrills: React.FC = () => {
       {drills.map((drill) => (
         <article key={drill.id} className="border-t border-[#F4EEF8] pt-2 text-sm space-y-1">
           <h4 className="text-[#241628]">{drill.title}</h4>
-          {drill.description && <p className="text-[#5C4A68]">{drill.description}</p>}
-          {drill.instructions && <p className="whitespace-pre-line">{drill.instructions}</p>}
+          {drill.description && <p className="text-[#5C4A68]"><LinkedText text={drill.description} /></p>}
+          {drill.instructions && <p className="whitespace-pre-line"><LinkedText text={drill.instructions} /></p>}
           {drill.attachmentUploadId && (
             <a href={mediaUrl(`/api/uploads/${drill.attachmentUploadId}`)} target="_blank" rel="noreferrer" className="text-[#5C2A6E] underline">Open attachment</a>
           )}

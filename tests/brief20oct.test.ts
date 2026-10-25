@@ -107,7 +107,8 @@ test('connect: a specific-club video is seen only by that club; likes and saves 
     const seenBy = async (token?: string) => (await t.call('GET', '/api/inspo?category=All', token)).body.posts.map((p: any) => p.id).sort();
     assert.deepEqual(await seenBy(bola.token), [forBeta.body.post.id, forAll.body.post.id].sort());
     assert.deepEqual(await seenBy(chi.token), [forAll.body.post.id]);
-    assert.deepEqual(await seenBy(), [forAll.body.post.id]);
+    // Signed-out visitors see nothing; "All Clubs" means every registered user.
+    assert.deepEqual(await seenBy(), []);
 
     // Like, then unlike
     assert.equal((await t.call('POST', `/api/inspo/${forAll.body.post.id}/like`, chi.token)).body.post.liked, true);
@@ -280,7 +281,7 @@ test('a large video arrives in pieces, out-of-order pieces are refused, and the 
     const done = (await last.json()) as { url: string; mime: string; size: number };
     assert.equal(done.mime, 'video/quicktime');
     assert.equal(done.size, whole.length);
-    const file = Buffer.from(await (await fetch(`${t.base}${done.url}`)).arrayBuffer());
+    const file = Buffer.from(await (await fetch(`${t.base}${done.url}`, { headers: { authorization: `Bearer ${ava.token}` } })).arrayBuffer());
     assert.ok(file.equals(whole));
     // Too big is refused before anything is stored
     const tooBig = await fetch(`${t.base}/api/uploads/sessions?scope=public&name=x.mp4&size=${81 * 1024 * 1024}`, { method: 'POST', headers: { authorization: `Bearer ${ava.token}`, 'x-upload-content-type': 'video/mp4' } });
@@ -313,45 +314,6 @@ test('Google Drive: a file in pieces uses one resumable session with the right b
   assert.deepEqual(calls.slice(1).map((c) => c.headers['content-range']), ['bytes 0-7/20', 'bytes 8-15/20', 'bytes 16-19/20']);
   await drive.remove({ id: 'u', ownerId: 'o', clubId: null, scope: 'private', mime: 'video/mp4', name: 'clip.mp4', size: 20, driveFileId: 'drive-9', createdAt: '' });
   assert.equal(calls.at(-1)?.method, 'DELETE');
-});
-
-test('a gymnast with a club never has to pay; one without a club does once the free week ends', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gymtrack-pay-'));
-  let clock = Date.parse('2026-10-24T09:00:00Z');
-  const app = await createApp({ dbPath: path.join(dir, 'db.json'), uploadDir: path.join(dir, 'uploads'), webhookSecret: 'test-secret', devMatch: false, notifiers: {}, now: () => new Date(clock) });
-  const server = app.listen(0);
-  await once(server, 'listening');
-  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  const call = async (method: string, url: string, token?: string, body?: unknown) => {
-    const r = await fetch(`${base}${url}`, { method, headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
-    return { status: r.status, body: (await r.json().catch(() => ({}))) as any };
-  };
-  try {
-    const club = await call('POST', '/api/auth/register-club', undefined, { clubName: 'Pay Club', city: 'Lagos', adminName: 'Admin', email: 'pay@club.test', password: PASSWORD, phone: '08030000000' });
-    const signup = (email: string, selectedClubId: string | null) =>
-      call('POST', '/api/auth/signup-student', undefined, { name: 'Gymnast', email, password: PASSWORD, phone: '08031234567', dateOfBirth: '2014-01-01', level: 1, selectedClubId });
-    const withClub = await signup('with-club@gym.test', club.body.club.id);
-    const noClub = await signup('no-club@gym.test', null);
-    assert.equal(withClub.body.user.access, 'club');
-    assert.equal(withClub.body.payment, null);
-    assert.equal(noClub.body.user.access, 'trial');
-
-    clock += 30 * 86400000; // a month later
-    const meWith = await call('GET', '/api/me', withClub.body.token);
-    const meWithout = await call('GET', '/api/me', noClub.body.token);
-    assert.equal(meWith.body.user.access, 'club');
-    assert.equal(meWith.body.user.periodEnd, null);
-    assert.equal(meWithout.body.user.access, 'locked');
-    assert.ok(meWithout.body.payment);
-    // Paid-only actions: the club gymnast is let through, the other is asked to pay
-    assert.equal((await call('GET', '/api/inspo/saved', withClub.body.token)).status, 200);
-    assert.equal((await call('GET', '/api/inspo/saved', noClub.body.token)).body.code, 'PAYMENT_REQUIRED');
-    // Choosing a club later also ends the need to pay
-    await call('PATCH', '/api/me', noClub.body.token, { selectedClubId: club.body.club.id });
-    assert.equal((await call('GET', '/api/me', noClub.body.token)).body.user.access, 'club');
-  } finally {
-    server.close();
-  }
 });
 
 test('a club deletes a stored document, and another club cannot', async () => {

@@ -64,6 +64,8 @@ const STATUS_BY_CODE: Record<string, number> = {
   ALREADY_APPROVED: 409,
   ALREADY_PENDING: 409,
   ALREADY_REVIEWED: 409,
+  NOT_PENDING: 409,
+  NOT_APPROVED: 409,
   DUPLICATE: 409,
 };
 
@@ -413,8 +415,65 @@ export async function createApp(options?: { dbPath?: string; databaseUrl?: strin
       res.status(403).json({ code: 'FORBIDDEN' });
       return null;
     }
+    // After the club's free week, club features need an active subscription.
+    if (!store.accessOpen(user)) {
+      res.status(403).json({ code: 'PAYMENT_REQUIRED' });
+      return null;
+    }
     return user;
   }
+
+  async function requireOperator(req: AuthedRequest, res: Response) {
+    const user = await requireAccount(req, res);
+    if (!user) return null;
+    if (!store.publicUser(user).operator) {
+      res.status(403).json({ code: 'FORBIDDEN' });
+      return null;
+    }
+    return user;
+  }
+
+  app.get('/api/operator/clubs', asyncRoute(async (req, res) => {
+    const operator = await requireOperator(req, res);
+    if (!operator) return;
+    res.json({ clubs: store.operatorClubs(operator) });
+  }));
+
+  app.post('/api/operator/clubs/:id/activate', asyncRoute(async (req, res) => {
+    const operator = await requireOperator(req, res);
+    if (!operator) return;
+    try {
+      res.status(201).json({ subscription: await store.activateClubSubscription(operator, req.params.id, req.body ?? {}) });
+    } catch (error) {
+      fail(res, error);
+    }
+  }));
+
+  app.delete('/api/skills/submissions/:id', asyncRoute(async (req, res) => {
+    const user = await requireAccount(req, res);
+    if (!user) return;
+    let upload;
+    try {
+      upload = await store.withdrawSubmission(user, req.params.id);
+    } catch (error) {
+      fail(res, error);
+      return;
+    }
+    if (upload) {
+      await storage.remove(upload).catch((error) => console.error('Withdrawn skill video could not be deleted', error instanceof Error ? error.message : error));
+    }
+    res.json({ ok: true, statuses: store.statusesFor(user.id), progress: store.progressFor(user) });
+  }));
+
+  app.post('/api/club/submissions/:id/remove-approval', asyncRoute(async (req, res) => {
+    const staff = await requireStaffAccount(req, res);
+    if (!staff) return;
+    try {
+      res.json({ submission: await store.removeApproval(staff, req.params.id) });
+    } catch (error) {
+      fail(res, error);
+    }
+  }));
 
   app.get('/api/club/overview', asyncRoute(async (req, res) => {
     const staff = await requireStaffAccount(req, res);
@@ -739,7 +798,7 @@ export async function createApp(options?: { dbPath?: string; databaseUrl?: strin
     const token = bearer(req) || (typeof req.query.token === 'string' ? req.query.token : undefined);
     const viewer = await store.userByToken(token);
     if (!store.canReadUpload(viewer, upload)) {
-      res.status(upload.scope === 'private' && !viewer ? 401 : 403).json({ code: 'FORBIDDEN' });
+      res.status(!viewer ? 401 : 403).json({ code: 'FORBIDDEN' });
       return;
     }
     res.setHeader('content-type', upload.mime);

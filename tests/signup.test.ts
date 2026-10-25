@@ -75,7 +75,7 @@ test('a club member stays in the app without paying, even after the trials end',
   if (!student) throw new Error('missing student');
   student.periodEnd = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const session = await store.login('ava-club@gym.test', 'ava-pass');
-  assert.equal(session.user.access, 'club');
+  assert.equal(session.user.access, 'free');
   const post = {
     videoUrl: 'a.mp4',
     caption: 'hi',
@@ -90,7 +90,7 @@ test('a club member stays in the app without paying, even after the trials end',
   await assert.rejects(() => store.createPost(student, post), /VIDEO_INVALID/);
 });
 
-test('club signup allocates paid students and a direct signup has no club', async () => {
+test('club signup adds free students and a direct signup has no club, and gymnasts never pay', async () => {
   const { server, base, advance } = await start();
   try {
     const club = await json(await fetch(`${base}/api/auth/register-club`, {
@@ -124,7 +124,8 @@ test('club signup allocates paid students and a direct signup has no club', asyn
       }),
     }));
     assert.equal(batch.status, 201);
-    assert.equal(batch.body.payment.amount, 2000);
+    // Gymnasts are free, so adding them opens no payment.
+    assert.equal(batch.body.payment, null);
 
     const tooSoon = await json(await fetch(`${base}/api/auth/login`, {
       method: 'POST',
@@ -132,7 +133,7 @@ test('club signup allocates paid students and a direct signup has no club', asyn
       body: JSON.stringify({ email: 'ava@gym.test', password: 'ava-pass-1' }),
     }));
     assert.equal(tooSoon.status, 200);
-    assert.equal(tooSoon.body.user.access, 'club');
+    assert.equal(tooSoon.body.user.access, 'free');
     assert.equal(tooSoon.body.payment, null);
     const duringTrial = await json(await fetch(`${base}/api/inspo`, {
       method: 'POST',
@@ -150,20 +151,6 @@ test('club signup allocates paid students and a direct signup has no club', asyn
     // Still in after the trial: a club gymnast is never asked to pay.
     assert.equal(locked.status, 400);
     assert.equal(locked.body.code, 'VIDEO_INVALID');
-
-    const paid = await json(await fetch(`${base}/api/payments/webhook`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-gymtrack-webhook-secret': 'test-secret' },
-      body: JSON.stringify({ reference: batch.body.payment.reference, amount: 2000, transferId: 'soly-1' }),
-    }));
-    assert.equal(paid.status, 200);
-
-    const replay = await json(await fetch(`${base}/api/payments/webhook`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-gymtrack-webhook-secret': 'test-secret' },
-      body: JSON.stringify({ reference: batch.body.payment.reference, amount: 2000, transferId: 'soly-1' }),
-    }));
-    assert.equal(replay.body.alreadyPaid, true);
 
     const ava = await json(await fetch(`${base}/api/auth/login`, {
       method: 'POST',
@@ -191,34 +178,29 @@ test('club signup allocates paid students and a direct signup has no club', asyn
         level: 4,
       }),
     }));
-    assert.equal(solo.body.payment.amount, 1000);
-    assert.equal(solo.body.user.access, 'trial');
+    assert.equal(solo.body.payment, null);
+    assert.equal(solo.body.user.access, 'free');
     assert.ok(solo.body.token);
     const kemiEarly = await json(await fetch(`${base}/api/me`, {
       headers: { authorization: `Bearer ${solo.body.token}` },
     }));
     assert.equal(kemiEarly.status, 200);
     assert.equal(kemiEarly.body.user.clubId, null);
-    assert.equal(kemiEarly.body.user.access, 'trial');
+    assert.equal(kemiEarly.body.user.access, 'free');
     advance(8);
-    const kemiLocked = await json(await fetch(`${base}/api/inspo/missing/like`, {
+    // A week on, a gymnast with no club is still in: past the payment check, the post simply does not exist.
+    const kemiLater = await json(await fetch(`${base}/api/inspo/missing/like`, {
       method: 'POST',
       headers: { authorization: `Bearer ${solo.body.token}` },
     }));
-    assert.equal(kemiLocked.status, 403);
-    assert.equal(kemiLocked.body.code, 'PAYMENT_REQUIRED');
-    await fetch(`${base}/api/payments/webhook`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-gymtrack-webhook-secret': 'test-secret' },
-      body: JSON.stringify({ reference: solo.body.payment.reference, amount: 1000, transferId: 'soly-2' }),
-    });
+    assert.equal(kemiLater.status, 404);
     const kemi = await json(await fetch(`${base}/api/auth/login`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ email: 'kemi@gym.test', password: 'kemi-pass-1' }),
     }));
     assert.equal(kemi.body.user.clubId, null);
-    assert.equal(kemi.body.user.access, 'paid');
+    assert.equal(kemi.body.user.access, 'free');
 
     const events = await json(await fetch(`${base}/api/events?q=vault`));
     assert.equal(events.body.featured.id, 'ev_gymfest_3');
@@ -261,11 +243,6 @@ test('inspo hides club videos from other clubs, and a child publishes without a 
         students: [{ name: 'Ava', email: 'ava2@gym.test', password: 'ava-pass-1', dateOfBirth: '2014-04-01', level: 3 }],
       }),
     }));
-    await fetch(`${base}/api/payments/webhook`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-gymtrack-webhook-secret': 'test-secret' },
-      body: JSON.stringify({ reference: batch.body.payment.reference, amount: 1000, transferId: 'soly-3' }),
-    });
     const ava = await json(await fetch(`${base}/api/auth/login`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
