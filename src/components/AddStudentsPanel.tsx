@@ -31,8 +31,14 @@ export const AddStudentsPanel: React.FC = () => {
       setMessage(`${name.trim()} is added to your club roster.`);
     } catch (error) {
       setFailed(true);
-      const status = (error as { status?: number }).status;
-      setMessage(status === 409 ? 'That email is already registered. Each gymnast needs their own email.' : 'Could not add that gymnast. Check every field and try again.');
+      const { status, body } = error as { status?: number; body?: { code?: string } };
+      const reasons: Record<string, string> = {
+        PASSWORD_SHORT: 'The temporary password needs at least 8 characters.',
+        PHONE_INVALID: 'Enter a full telephone number, for example 0803 123 4567.',
+        EMAIL_INVALID: 'Enter a valid email address.',
+        DOB_INVALID: 'Enter a real date of birth.',
+      };
+      setMessage(status === 409 ? 'That email is already registered. Each gymnast needs their own email.' : reasons[body?.code ?? ''] ?? 'Could not add that gymnast. Check every field and try again.');
     } finally {
       setBusy(false);
     }
@@ -51,11 +57,11 @@ export const AddStudentsPanel: React.FC = () => {
     <section id="add-student-panel" className="pt-2">
       <form onSubmit={submit} className="bg-[#F4EEF8] border border-[#E4D7EE] rounded-2xl p-4 space-y-2">
         <h2 className="font-display text-xl text-[#3E1B4A]">Add a Gymnast</h2>
-        <p className="text-xs text-[#5C4A68]">They can sign in straight away. GymTrack is free for gymnasts.</p>
+        <p className="text-xs text-[#5C4A68]">They can sign in straight away. GymTrack is free for gymnasts. By adding a gymnast you confirm their parent or guardian has agreed to the <a href="/privacy" target="_blank" rel="noopener noreferrer" className="text-[#5C2A6E] underline">Privacy Policy</a>.</p>
         <div className="grid sm:grid-cols-2 gap-2">
           <input required value={name} onChange={(e) => setName(e.target.value)} placeholder="Student name" className="rounded-2xl border border-[#E4D7EE] px-3 py-2 text-sm" />
           <input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" className="rounded-2xl border border-[#E4D7EE] px-3 py-2 text-sm" />
-          <PasswordInput required value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Temporary password" className="w-full rounded-2xl border border-[#E4D7EE] px-3 py-2 text-sm" />
+          <PasswordInput required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Temporary password (8+ characters)" className="w-full rounded-2xl border border-[#E4D7EE] px-3 py-2 text-sm" />
           <label className="text-xs text-[#5C4A68]">
             Date of birth
             <input required type="date" value={dateOfBirth} onChange={(e) => setDateOfBirth(e.target.value)} className="mt-1 w-full rounded-2xl border border-[#E4D7EE] px-3 py-2 text-sm" />

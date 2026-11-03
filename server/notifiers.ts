@@ -8,26 +8,43 @@ import { solyntaflowNotifiers } from './solyntaflow.ts';
  * feature reports "not configured" instead of pretending to send.
  *
  * Email:    SMTP_HOST, SMTP_PORT (587), SMTP_USER, SMTP_PASS, SMTP_FROM (defaults to SMTP_USER), CONTACT_TO
+ * Password reset email also needs APP_URL, the site's public address. It is a setting
+ * and never read from the request, so a forged Host header cannot change where a link points.
  * WhatsApp: WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_TEMPLATE_NAME, WHATSAPP_TEMPLATE_LANG (en)
  */
 export function defaultNotifiers(env: NodeJS.ProcessEnv = process.env): Notifiers {
   const notifiers: Notifiers = {};
 
-  if (env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS && env.CONTACT_TO) {
-    const transport = nodemailer.createTransport({
-      host: env.SMTP_HOST,
-      port: Number(env.SMTP_PORT || 587),
-      secure: Number(env.SMTP_PORT || 587) === 465,
-      auth: { user: env.SMTP_USER, pass: env.SMTP_PASS },
-    });
+  const transport = env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS
+    ? nodemailer.createTransport({
+        host: env.SMTP_HOST,
+        port: Number(env.SMTP_PORT || 587),
+        secure: Number(env.SMTP_PORT || 587) === 465,
+        auth: { user: env.SMTP_USER, pass: env.SMTP_PASS },
+      })
+    : null;
+  const from = env.SMTP_FROM || env.SMTP_USER;
+
+  if (transport && env.CONTACT_TO) {
     const to = env.CONTACT_TO;
-    const from = env.SMTP_FROM || env.SMTP_USER;
     notifiers.mail = async ({ name, phone, message }) => {
       await transport.sendMail({
         from,
         to,
         subject: `GymTrack enquiry from ${name}`,
         text: `Name: ${name}\nTelephone: ${phone}\n\n${message}`,
+      });
+    };
+  }
+
+  const appUrl = /^https?:\/\//.test(env.APP_URL ?? '') ? (env.APP_URL as string).replace(/\/+$/, '') : '';
+  if (transport && appUrl) {
+    notifiers.resetEmail = async ({ to, name, token }) => {
+      await transport.sendMail({
+        from,
+        to,
+        subject: 'Reset your GymTrack password',
+        text: `Hello ${name},\n\nUse this link to choose a new GymTrack password. It works once, for one hour:\n\n${appUrl}/?reset=${token}\n\nIf you did not ask for this, you can ignore this email. Your password has not changed.`,
       });
     };
   }

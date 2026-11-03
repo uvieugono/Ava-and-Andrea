@@ -5,6 +5,7 @@ import { AddStudentsPanel } from '../components/AddStudentsPanel';
 import { ClubCompetitions, ClubDrills, DrillDialog, medalLabel } from '../components/ClubPrograms';
 import { RosterGymnast, CoachNote } from '../types';
 import { mediaUrl } from '../services/gymApi';
+import { localDate } from '../lib/dates';
 import { Avatar } from '../components/Avatar';
 import { LinkedText } from '../components/LinkedText';
 import { 
@@ -68,7 +69,7 @@ export const GymDashboardScreen: React.FC = () => {
 
   // New competition record
   const [compName, setCompName] = useState('');
-  const [compDate, setCompDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [compDate, setCompDate] = useState(localDate);
   const [compEvents, setCompEvents] = useState<string[]>([]);
   const [compResult, setCompResult] = useState('');
   const [compComments, setCompComments] = useState('');

@@ -36,6 +36,7 @@ import {
   clearAccess,
   readAccess,
   setAccess,
+  setMediaToken,
   getToken,
   gymApi,
   mediaUrl,
@@ -314,6 +315,7 @@ export const GymProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const refreshAccount = useCallback(async () => {
     if (!getToken()) return;
     const me = await gymApi.me();
+    setMediaToken(me.mediaToken);
     const next = me.user;
     if (next.role === 'GYMNAST') {
       const skillsResult = await gymApi.mySkills();
@@ -366,6 +368,8 @@ export const GymProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   const logoutUser = useCallback(() => {
+    // Best effort: this device forgets the sign-in either way.
+    if (getToken()) gymApi.logout().catch(() => undefined);
     clearAccess();
     levelRef.current = null;
     setUser(SIGNED_OUT);
@@ -388,6 +392,7 @@ export const GymProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       .me()
       .then((result) => {
         if (cancelled) return;
+        setMediaToken(result.mediaToken);
         loginFromServer(result.user);
         levelRef.current = result.user.level ?? null;
       })
@@ -563,11 +568,15 @@ export const GymProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const result = await gymApi.sendFeeReminder(gymnastId, message);
       await refreshOverview();
       const { status, detail } = result.reminder;
+      if (status === 'failed' && /wallet|credit|wa_cap/i.test(detail)) return { ok: false, message: 'GymTrack cannot send WhatsApp messages at the moment, so nothing was sent. Please tell the GymTrack team.' };
       if (status === 'sent') return { ok: true, message: 'WhatsApp reminder sent to the number registered for this gymnast.' };
       if (status === 'no_phone') return { ok: false, message: 'This gymnast has no telephone number on file. Nothing was sent.' };
       if (status === 'not_configured') return { ok: false, message: 'WhatsApp is not set up yet, so nothing was sent. The reminder was recorded.' };
       return { ok: false, message: `WhatsApp did not send it: ${detail}` };
-    } catch {
+    } catch (error) {
+      const code = errorCode(error);
+      if (code === 'ALREADY_SENT') return { ok: false, message: 'That same reminder was sent to this gymnast a few minutes ago, so it was not sent again.' };
+      if (code === 'TOO_LONG') return { ok: false, message: 'That message is too long. Keep it under 400 characters.' };
       return { ok: false, message: 'The reminder could not be sent. Try again.' };
     }
   };

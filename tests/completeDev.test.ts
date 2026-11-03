@@ -18,7 +18,7 @@ process.env.GYMTRACK_OPERATOR_EMAILS = OPERATOR;
 async function start() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gymtrack-cd-'));
   let clock = Date.parse('2026-10-25T09:00:00Z');
-  const app = await createApp({ dbPath: path.join(dir, 'db.json'), uploadDir: path.join(dir, 'uploads'), webhookSecret: 'test-secret', devMatch: false, notifiers: {}, now: () => new Date(clock) });
+  const app = await createApp({ clubApproval: false, dbPath: path.join(dir, 'db.json'), uploadDir: path.join(dir, 'uploads'), webhookSecret: 'test-secret', devMatch: false, notifiers: {}, now: () => new Date(clock) });
   const server = app.listen(0);
   await once(server, 'listening');
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;

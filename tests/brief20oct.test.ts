@@ -19,7 +19,7 @@ const PASSWORD = randomBytes(12).toString('hex');
 
 async function start() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gymtrack-b20-'));
-  const app = await createApp({ dbPath: path.join(dir, 'db.json'), uploadDir: path.join(dir, 'uploads'), webhookSecret: 'test-secret', devMatch: false, notifiers: {} });
+  const app = await createApp({ clubApproval: false, dbPath: path.join(dir, 'db.json'), uploadDir: path.join(dir, 'uploads'), webhookSecret: 'test-secret', devMatch: false, notifiers: {} });
   const server = app.listen(0);
   await once(server, 'listening');
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;

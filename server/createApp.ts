@@ -4,6 +4,7 @@ import os from 'os';
 import path from 'path';
 import { randomBytes } from 'crypto';
 import { GymStore, INSPO_CATEGORIES, openStore } from './store.ts';
+import { REMOVED_CLUB_IDS } from './dataCleanups.ts';
 import { openPostgresStore } from './postgres.ts';
 import { defaultNotifiers } from './notifiers.ts';
 import { defaultStorage, StorageError, type Storage } from './storage.ts';
@@ -67,25 +68,91 @@ const STATUS_BY_CODE: Record<string, number> = {
   NOT_PENDING: 409,
   NOT_APPROVED: 409,
   DUPLICATE: 409,
+  ALREADY_SENT: 409,
+  EMAIL_TAKEN: 409,
+  CLUB_NOT_APPROVED: 403,
+  WRONG_PASSWORD: 403,
 };
 
+/** Our own codes pass through. Anything else is an internal message and stays on the server. */
+function safeCode(error: unknown) {
+  const message = error instanceof Error ? error.message : '';
+  return /^[A-Z][A-Z_]+(:\S*)?$/.test(message) ? message : 'ERROR';
+}
+
 function fail(res: Response, error: unknown, fallback = 400) {
-  const code = error instanceof Error ? error.message : 'ERROR';
+  const code = safeCode(error);
   res.status(STATUS_BY_CODE[code] ?? fallback).json({ code });
 }
 
-export async function createApp(options?: { dbPath?: string; databaseUrl?: string; webhookSecret?: string; devMatch?: boolean; now?: () => Date; notifiers?: Notifiers; uploadDir?: string; storage?: Storage }) {
+export function securityHeaders(_req: Request, res: Response, next: NextFunction) {
+  res.setHeader('x-content-type-options', 'nosniff');
+  res.setHeader('x-frame-options', 'SAMEORIGIN');
+  res.setHeader('referrer-policy', 'same-origin');
+  next();
+}
+
+/** Counts events per key within a time window. Forgets everything if it ever grows very large. */
+function counter(limit: number, windowMs: number, now: () => Date) {
+  const hits = new Map<string, number[]>();
+  const recent = (key: string) => (hits.get(key) ?? []).filter((time) => time > now().getTime() - windowMs);
+  return {
+    full: (key: string) => recent(key).length >= limit,
+    add(key: string) {
+      if (hits.size > 20000) hits.clear();
+      hits.set(key, [...recent(key), now().getTime()]);
+    },
+    clear: (key: string) => hits.delete(key),
+  };
+}
+
+export async function createApp(options?: { dbPath?: string; databaseUrl?: string; webhookSecret?: string; devMatch?: boolean; now?: () => Date; notifiers?: Notifiers; uploadDir?: string; storage?: Storage; clubApproval?: boolean; removeClubIds?: string[] }) {
   const dbPath = options?.dbPath || process.env.GYMTRACK_DB || path.join(process.cwd(), 'data', 'gymtrack.json');
   const databaseUrl = options?.databaseUrl ?? (options?.dbPath ? undefined : process.env.DATABASE_URL);
   const now = options?.now ?? (() => new Date());
   const notifiers = options?.notifiers ?? defaultNotifiers();
   const uploadDir = options?.uploadDir || process.env.GYMTRACK_UPLOADS || path.join(path.dirname(dbPath), 'uploads');
   const storage = options?.storage ?? defaultStorage(uploadDir);
-  const store = databaseUrl ? await openPostgresStore(databaseUrl, now, notifiers) : openStore(dbPath, now, notifiers);
-  const webhookSecret = options?.webhookSecret ?? process.env.GYMTRACK_WEBHOOK_SECRET ?? 'dev-webhook-secret';
+  const storeOptions = { clubApproval: options?.clubApproval };
+  const store = databaseUrl ? await openPostgresStore(databaseUrl, now, notifiers, storeOptions) : openStore(dbPath, now, notifiers, storeOptions);
+  const removed = await store.removeClubs(options?.removeClubIds ?? REMOVED_CLUB_IDS);
+  if (removed.clubs > 0) {
+    console.log(`Removed ${removed.clubs} clubs, ${removed.staff} staff accounts and ${removed.files.length} files. ${removed.gymnastsKept} gymnasts kept their accounts.`);
+    for (const file of removed.files) {
+      storage.remove(file).catch((error) => console.error('Stored file could not be deleted', error instanceof Error ? error.message : error));
+    }
+  }
+  const webhookSecret = options?.webhookSecret ?? process.env.GYMTRACK_WEBHOOK_SECRET ?? (process.env.NODE_ENV === 'production' ? '' : 'dev-webhook-secret');
   const devMatch = options?.devMatch ?? (process.env.GYMTRACK_DEV_MATCH !== '0' && process.env.NODE_ENV !== 'production');
   const app = express();
+  app.disable('x-powered-by');
+  // One proxy (Google's front end) sits in front of the app, and it adds the visitor's address.
+  app.set('trust proxy', 1);
+  app.use(securityHeaders);
   app.use(express.json({ limit: '8mb' }));
+
+  const failedLogins = counter(10, 15 * 60 * 1000, now);
+  const registrations = counter(60, 60 * 60 * 1000, now);
+  const contactHits = counter(5, 10 * 60 * 1000, now);
+  const resetByAddress = counter(10, 60 * 60 * 1000, now);
+  const resetByAccount = counter(3, 60 * 60 * 1000, now);
+
+  function refuseRegistration(req: Request, res: Response) {
+    const key = req.ip || 'unknown';
+    if (registrations.full(key)) {
+      res.status(429).json({ code: 'TOO_MANY' });
+      return true;
+    }
+    registrations.add(key);
+    return false;
+  }
+
+  // An enquiry SolyntaFlow or the mailbox could not take stays saved, and is tried again until it goes.
+  if (notifiers.enquiry || notifiers.mail) {
+    setInterval(() => {
+      store.resendContacts().catch((error) => console.error('Enquiries could not be sent again', error instanceof Error ? error.message : error));
+    }, 10 * 60 * 1000).unref();
+  }
 
   async function requireAccount(req: AuthedRequest, res: Response) {
     const user = await store.userByToken(bearer(req));
@@ -100,6 +167,10 @@ export async function createApp(options?: { dbPath?: string; databaseUrl?: strin
   async function requirePaid(req: AuthedRequest, res: Response) {
     const user = await requireAccount(req, res);
     if (!user) return null;
+    if (store.clubWaiting(user)) {
+      res.status(403).json({ code: 'CLUB_NOT_APPROVED' });
+      return null;
+    }
     if (!store.accessOpen(user)) {
       res.status(403).json({ code: 'PAYMENT_REQUIRED', payment: store.paymentFor(user) });
       return null;
@@ -112,37 +183,47 @@ export async function createApp(options?: { dbPath?: string; databaseUrl?: strin
   });
 
   app.post('/api/auth/register-club', asyncRoute(async (req, res) => {
-    const { clubName, city, adminName, email, password, phone } = req.body ?? {};
+    const { clubName, city, adminName, email, password, phone, acceptedPrivacy } = req.body ?? {};
     if (!clubName || !city || !adminName || !email || !password) {
       res.status(400).json({ code: 'MISSING' });
       return;
     }
+    if (refuseRegistration(req, res)) return;
     try {
-      res.status(201).json(await store.registerClub({ clubName, city, adminName, email, password, phone }));
+      res.status(201).json(await store.registerClub({ clubName, city, adminName, email, password, phone, acceptedPrivacy }));
     } catch (error) {
-      const message = error instanceof Error ? error.message : '';
-      res.status(message === 'EMAIL_TAKEN' ? 409 : 400).json({ code: message || 'ERROR' });
+      const code = safeCode(error);
+      res.status(code === 'EMAIL_TAKEN' ? 409 : 400).json({ code });
     }
   }));
 
   app.post('/api/auth/signup-student', asyncRoute(async (req, res) => {
-    const { name, email, password, phone, level, dateOfBirth, selectedClubId } = req.body ?? {};
+    const { name, email, password, phone, level, dateOfBirth, selectedClubId, acceptedPrivacy } = req.body ?? {};
     if (!name || !email || !password || !dateOfBirth || !String(phone ?? '').trim()) {
       res.status(400).json({ code: 'MISSING' });
       return;
     }
+    if (refuseRegistration(req, res)) return;
     try {
-      const result = await store.signupStudent({ name, email, password, phone, level, dateOfBirth, selectedClubId });
+      const result = await store.signupStudent({ name, email, password, phone, level, dateOfBirth, selectedClubId, acceptedPrivacy });
       res.status(201).json({ ...result, devMatch });
     } catch (error) {
-      const message = error instanceof Error ? error.message : '';
-      res.status(message.startsWith('EMAIL_TAKEN') ? 409 : 400).json({ code: message || 'ERROR' });
+      const code = safeCode(error);
+      res.status(code.startsWith('EMAIL_TAKEN') ? 409 : 400).json({ code });
     }
   }));
 
   app.post('/api/auth/login', asyncRoute(async (req, res) => {
+    // Per address and account, so one person's mistakes never lock out their club's shared Wi-Fi.
+    const key = `${req.ip}|${String(req.body?.email ?? '').trim().toLowerCase()}`;
+    if (failedLogins.full(key)) {
+      res.status(429).json({ code: 'TOO_MANY' });
+      return;
+    }
     try {
-      res.json(await store.login(req.body?.email ?? '', req.body?.password ?? ''));
+      const session = await store.login(req.body?.email ?? '', req.body?.password ?? '');
+      failedLogins.clear(key);
+      res.json(session);
     } catch (error) {
       const payment = (error as { payment?: unknown }).payment;
       const message = error instanceof Error ? error.message : '';
@@ -150,14 +231,61 @@ export async function createApp(options?: { dbPath?: string; databaseUrl?: strin
         res.status(403).json({ code: 'PAYMENT_REQUIRED', payment });
         return;
       }
+      failedLogins.add(key);
       res.status(401).json({ code: 'INVALID' });
     }
+  }));
+
+  // Same answer whether or not the account exists, and the sending is not waited for,
+  // so this cannot be used to find out who has an account.
+  app.post('/api/auth/forgot-password', asyncRoute(async (req, res) => {
+    const emailOn = Boolean(notifiers.resetEmail);
+    const address = String(req.body?.email ?? '').trim().toLowerCase();
+    const ip = req.ip || 'unknown';
+    if (!address || resetByAddress.full(ip)) {
+      res.status(address ? 429 : 400).json({ code: address ? 'TOO_MANY' : 'MISSING' });
+      return;
+    }
+    resetByAddress.add(ip);
+    res.json({ ok: true, emailed: emailOn });
+    if (resetByAccount.full(address)) return;
+    resetByAccount.add(address);
+    const started = await store.startPasswordReset(address);
+    if (!started) return;
+    const send = notifiers.resetEmail
+      ? notifiers.resetEmail({ to: started.user.email, name: started.user.name, token: started.token })
+      : notifiers.enquiry?.({ name: started.user.name, phone: started.user.phone, message: `Password reset requested for ${started.user.email}. Check it is really them, then make a link on the operator page.` });
+    Promise.resolve(send).catch((error) => console.error('Password reset could not be sent', error instanceof Error ? error.message : error));
+  }));
+
+  app.post('/api/auth/reset-password', asyncRoute(async (req, res) => {
+    try {
+      res.json(await store.finishPasswordReset(req.body?.token, req.body?.password));
+    } catch (error) {
+      fail(res, error);
+    }
+  }));
+
+  app.post('/api/me/password', asyncRoute(async (req, res) => {
+    const user = await requireAccount(req, res);
+    if (!user) return;
+    try {
+      res.json(await store.changePassword(user, bearer(req) as string, req.body?.current, req.body?.next));
+    } catch (error) {
+      fail(res, error);
+    }
+  }));
+
+  app.post('/api/auth/logout', asyncRoute(async (req, res) => {
+    const token = bearer(req);
+    if (token && store.userByToken(token)) await store.revokeToken(token);
+    res.json({ ok: true });
   }));
 
   app.get('/api/me', asyncRoute(async (req, res) => {
     const user = await requireAccount(req, res);
     if (!user) return;
-    res.json({ user: store.publicUser(user), payment: store.paymentFor(user) });
+    res.json({ user: store.publicUser(user), payment: store.paymentFor(user), mediaToken: store.mediaTokenOf(bearer(req) as string) });
   }));
 
   app.post('/api/clubs/students', asyncRoute(async (req, res) => {
@@ -167,25 +295,14 @@ export async function createApp(options?: { dbPath?: string; databaseUrl?: strin
       const result = await store.signupClubStudents(admin, req.body?.students ?? []);
       res.status(201).json({ ...result, devMatch });
     } catch (error) {
-      const message = error instanceof Error ? error.message : '';
-      const status = message === 'FORBIDDEN' ? 403 : message.startsWith('EMAIL_TAKEN') ? 409 : 400;
-      res.status(status).json({ code: message || 'ERROR' });
-    }
-  }));
-
-  app.post('/api/clubs/allocate', asyncRoute(async (req, res) => {
-    const admin = await requirePaid(req, res);
-    if (!admin) return;
-    try {
-      res.json({ student: await store.allocatePaidStudent(admin, req.body?.studentId) });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '';
-      res.status(message === 'FORBIDDEN' ? 403 : 400).json({ code: message || 'ERROR' });
+      const code = safeCode(error);
+      const status = code === 'FORBIDDEN' ? 403 : code.startsWith('EMAIL_TAKEN') ? 409 : 400;
+      res.status(status).json({ code });
     }
   }));
 
   app.post('/api/payments/webhook', asyncRoute(async (req, res) => {
-    if (req.header('x-gymtrack-webhook-secret') !== webhookSecret) {
+    if (!webhookSecret || req.header('x-gymtrack-webhook-secret') !== webhookSecret) {
       res.status(401).json({ code: 'UNAUTHORIZED' });
       return;
     }
@@ -209,14 +326,6 @@ export async function createApp(options?: { dbPath?: string; databaseUrl?: strin
     } catch (error) {
       const message = error instanceof Error ? error.message : '';
       res.status(400).json({ code: message || 'ERROR' });
-    }
-  }));
-
-  app.post('/api/students/:id/parent', asyncRoute(async (req, res) => {
-    try {
-      res.json(await store.acceptParent(req.params.id, req.body?.parentEmail ?? ''));
-    } catch {
-      res.status(404).json({ code: 'NOT_FOUND' });
     }
   }));
 
@@ -262,11 +371,17 @@ export async function createApp(options?: { dbPath?: string; databaseUrl?: strin
   app.delete('/api/inspo/:id', asyncRoute(async (req, res) => {
     const user = await requireAccount(req, res);
     if (!user) return;
+    let upload;
     try {
-      res.json(await store.deletePost(user, req.params.id));
+      upload = await store.deletePost(user, req.params.id);
     } catch (error) {
       fail(res, error);
+      return;
     }
+    if (upload) {
+      await storage.remove(upload).catch((error) => console.error('Deleted video could not be removed from storage', error instanceof Error ? error.message : error));
+    }
+    res.json({ ok: true });
   }));
 
   app.get('/api/inspo/post/:id', asyncRoute(async (req, res) => {
@@ -314,6 +429,10 @@ export async function createApp(options?: { dbPath?: string; databaseUrl?: strin
       const message = error instanceof Error ? error.message : '';
       if (message === 'HELD') {
         res.status(422).json({ code: 'HELD' });
+        return;
+      }
+      if (message === 'TOO_LONG' || message === 'PARENT') {
+        res.status(400).json({ code: message });
         return;
       }
       res.status(404).json({ code: 'NOT_FOUND' });
@@ -415,6 +534,10 @@ export async function createApp(options?: { dbPath?: string; databaseUrl?: strin
       res.status(403).json({ code: 'FORBIDDEN' });
       return null;
     }
+    if (store.clubWaiting(user)) {
+      res.status(403).json({ code: 'CLUB_NOT_APPROVED' });
+      return null;
+    }
     // After the club's free week, club features need an active subscription.
     if (!store.accessOpen(user)) {
       res.status(403).json({ code: 'PAYMENT_REQUIRED' });
@@ -444,6 +567,36 @@ export async function createApp(options?: { dbPath?: string; databaseUrl?: strin
     if (!operator) return;
     try {
       res.status(201).json({ subscription: await store.activateClubSubscription(operator, req.params.id, req.body ?? {}) });
+    } catch (error) {
+      fail(res, error);
+    }
+  }));
+
+  app.post('/api/operator/clubs/:id/approve', asyncRoute(async (req, res) => {
+    const operator = await requireOperator(req, res);
+    if (!operator) return;
+    try {
+      res.json({ club: await store.approveClub(operator, req.params.id) });
+    } catch (error) {
+      fail(res, error);
+    }
+  }));
+
+  app.post('/api/operator/clubs/:id/reject', asyncRoute(async (req, res) => {
+    const operator = await requireOperator(req, res);
+    if (!operator) return;
+    try {
+      res.json({ club: await store.rejectClub(operator, req.params.id, req.body?.reason) });
+    } catch (error) {
+      fail(res, error);
+    }
+  }));
+
+  app.post('/api/operator/password-reset', asyncRoute(async (req, res) => {
+    const operator = await requireOperator(req, res);
+    if (!operator) return;
+    try {
+      res.status(201).json(await store.operatorPasswordReset(operator, req.body?.email));
     } catch (error) {
       fail(res, error);
     }
@@ -486,6 +639,26 @@ export async function createApp(options?: { dbPath?: string; databaseUrl?: strin
     if (!staff) return;
     try {
       res.json(await store.reviewSubmission(staff, req.params.id, req.body?.decision, String(req.body?.comment ?? '')));
+    } catch (error) {
+      fail(res, error);
+    }
+  }));
+
+  app.post('/api/club/coaches', asyncRoute(async (req, res) => {
+    const staff = await requireStaffAccount(req, res);
+    if (!staff) return;
+    try {
+      res.status(201).json({ coach: await store.addCoach(staff, req.body ?? {}) });
+    } catch (error) {
+      fail(res, error);
+    }
+  }));
+
+  app.delete('/api/club/coaches/:id', asyncRoute(async (req, res) => {
+    const staff = await requireStaffAccount(req, res);
+    if (!staff) return;
+    try {
+      res.json(await store.removeCoach(staff, req.params.id));
     } catch (error) {
       fail(res, error);
     }
@@ -643,17 +816,13 @@ export async function createApp(options?: { dbPath?: string; databaseUrl?: strin
   }));
 
   // ---- Contact form (public) ----
-  const contactHits = new Map<string, number[]>();
   app.post('/api/contact', asyncRoute(async (req, res) => {
     const key = req.ip || 'unknown';
-    const cutoff = now().getTime() - 10 * 60 * 1000;
-    const recent = (contactHits.get(key) ?? []).filter((time) => time > cutoff);
-    if (recent.length >= 5) {
+    if (contactHits.full(key)) {
       res.status(429).json({ code: 'TOO_MANY' });
       return;
     }
-    recent.push(now().getTime());
-    contactHits.set(key, recent);
+    contactHits.add(key);
     try {
       const result = await store.submitContact(req.body ?? {});
       res.status(201).json({ ok: true, emailed: result.emailed, forwarded: result.forwarded });
@@ -795,8 +964,8 @@ export async function createApp(options?: { dbPath?: string; databaseUrl?: strin
       res.status(404).json({ code: 'NOT_FOUND' });
       return;
     }
-    const token = bearer(req) || (typeof req.query.token === 'string' ? req.query.token : undefined);
-    const viewer = await store.userByToken(token);
+    // A <video> or link cannot send a header, so it carries the files-only key instead.
+    const viewer = bearer(req) ? store.userByToken(bearer(req)) : store.userByMediaToken(typeof req.query.token === 'string' ? req.query.token : undefined);
     if (!store.canReadUpload(viewer, upload)) {
       res.status(!viewer ? 401 : 403).json({ code: 'FORBIDDEN' });
       return;
@@ -807,9 +976,18 @@ export async function createApp(options?: { dbPath?: string; databaseUrl?: strin
     await storage.send(upload, req, res);
   }));
 
+  app.use('/api', (_req, res) => {
+    res.status(404).json({ code: 'NOT_FOUND' });
+  });
+
   app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
-    if ((error as { status?: number })?.status === 413) {
+    const status = (error as { status?: number })?.status;
+    if (status === 413) {
       res.status(413).json({ code: 'FILE_TOO_LARGE' });
+      return;
+    }
+    if (status && status >= 400 && status < 500) {
+      res.status(status).json({ code: 'BAD_REQUEST' });
       return;
     }
     console.error(error);

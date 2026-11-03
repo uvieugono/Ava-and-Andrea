@@ -1,3 +1,4 @@
+import { localDate } from '../lib/dates';
 import React, { useState } from 'react';
 import { Dumbbell, Medal, Trophy, X } from 'lucide-react';
 import { useGym } from '../context/GymContext';
@@ -126,7 +127,7 @@ type Entry = { gymnastId: string; level: string; result: string; medal: string }
 const CompetitionForm: React.FC<{ onDone: () => void }> = ({ onDone }) => {
   const { rosterGymnasts, addCompetitionEvent } = useGym();
   const [name, setName] = useState('');
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(localDate);
   const [time, setTime] = useState('');
   const [venue, setVenue] = useState('');
   const [entries, setEntries] = useState<Entry[]>([]);
