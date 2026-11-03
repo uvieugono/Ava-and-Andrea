@@ -19,6 +19,8 @@ import { ClubsScreen } from './screens/ClubsScreen';
 import { GymDashboardScreen } from './screens/GymDashboardScreen';
 import { PageSketch } from './components/GymnastSketch';
 import { OperatorScreen } from './screens/OperatorScreen';
+import { PrivacyScreen } from './screens/PrivacyScreen';
+import { ClubAwaitingApproval } from './components/ClubAwaitingApproval';
 
 const MainApp: React.FC = () => {
   const { user, ready, currentTab: selectedTab, userRole, isStaff, isOperator, logoutUser } = useGym();
@@ -43,6 +45,7 @@ const MainApp: React.FC = () => {
 
   const access = readAccess();
   // Gymnasts are free. Only a club account whose trial has ended without a subscription is asked to pay.
+  const clubWaiting = isStaff && (access.status === 'pending' || access.status === 'rejected');
   const needsPayment = isStaff && !paidOpen && (access.status === 'locked' || access.status === 'pending_payment');
   const clubTrialLabel = access.until
     ? new Date(access.until).toLocaleDateString(undefined, { day: 'numeric', month: 'long' })
@@ -55,7 +58,9 @@ const MainApp: React.FC = () => {
 
       {/* Main Content Area with Header and Bottom Nav Offset */}
       <main className="flex-1 pt-16 pb-10">
-        {needsPayment && currentTab !== 'profile' ? (
+        {clubWaiting && currentTab !== 'profile' ? (
+          <ClubAwaitingApproval onLogout={logoutUser} />
+        ) : needsPayment && currentTab !== 'profile' ? (
           <PaymentRequired onUnlock={() => setPaidOpen(true)} onLogout={logoutUser} />
         ) : (
           <>
@@ -92,6 +97,8 @@ const MainApp: React.FC = () => {
 };
 
 export default function App() {
+  // Open to everyone, signed in or not.
+  if (window.location.pathname === '/privacy') return <PrivacyScreen />;
   return (
     <GymProvider>
       <MainApp />

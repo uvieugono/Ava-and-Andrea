@@ -148,15 +148,26 @@ export interface UploadSessionRecord {
 
 export interface Notifiers {
   mail?: (message: { name: string; phone: string; message: string }) => Promise<void>;
+  /** Emails a password reset link. Only set when email is configured. */
+  resetEmail?: (message: { to: string; name: string; token: string }) => Promise<void>;
   /** Files the enquiry as a ticket on GymTrack's SolyntaFlow company. */
   enquiry?: (message: { name: string; phone: string; message: string }) => Promise<void>;
   whatsapp?: (input: { to: string; gymnastName: string; clubName: string; message: string }) => Promise<{ status: 'sent' | 'failed' | 'not_configured'; detail: string }>;
 }
 
 export const MAX_COMMENT = 1000;
+/** The longest message the approved WhatsApp fee reminder template can carry. */
+export const MAX_REMINDER = 400;
+const REMINDER_REPEAT_MS = 10 * 60 * 1000;
+const CONTACT_RETRY_AFTER_MS = 5 * 60 * 1000;
 
 function newId(prefix: string) {
   return `${prefix}_${randomBytes(6).toString('hex')}`;
+}
+
+/** Clubs from before approval existed have no status and count as approved. */
+export function clubIsApproved(club: { approvalStatus?: string } | null | undefined) {
+  return Boolean(club) && (club?.approvalStatus ?? 'approved') === 'approved';
 }
 
 export function clubOf(user: UserRecord) {
@@ -183,8 +194,12 @@ export function requiredSkills(user: Pick<UserRecord, 'level' | 'offersBars' | '
 export function normalisePhone(raw: string) {
   const digits = raw.replace(/[^\d]/g, '');
   if (!digits) return '';
+  // +234 0803... : the local leading 0 was kept after the country code.
+  if (digits.startsWith('2340')) return `234${digits.slice(4)}`;
   if (digits.startsWith('234')) return digits;
   if (digits.startsWith('0')) return `234${digits.slice(1)}`;
+  // 803 123 4567: a Nigerian mobile number with no leading 0.
+  if (/^[789]\d{9}$/.test(digits)) return `234${digits}`;
   return digits;
 }
 
@@ -312,12 +327,12 @@ export function createWorkflow(
 
     async updateProfile(user: UserRecord, input: { name?: string; phone?: string; selectedClubId?: string | null; offersBars?: boolean; offersBeam?: boolean }) {
       if (input.name !== undefined) {
-        const name = input.name.trim();
+        const name = typeof input.name === 'string' ? input.name.trim().slice(0, 120) : '';
         if (!name) throw new Error('NAME_REQUIRED');
         user.name = name;
       }
       if (input.phone !== undefined) {
-        const phone = input.phone.trim();
+        const phone = String(input.phone).trim().slice(0, 40);
         if (phone && normalisePhone(phone).length < 10) throw new Error('PHONE_INVALID');
         user.phone = phone;
       }
@@ -327,8 +342,15 @@ export function createWorkflow(
           if (input.selectedClubId === null || input.selectedClubId === '') {
             user.selectedClubId = null;
           } else {
-            if (!db.clubs.some((item) => item.id === input.selectedClubId)) throw new Error('CLUB_NOT_FOUND');
+            if (!clubIsApproved(db.clubs.find((item) => item.id === input.selectedClubId))) throw new Error('CLUB_NOT_FOUND');
             user.selectedClubId = input.selectedClubId;
+            // A video still waiting for review goes to the club that can now review it.
+            for (const item of db.submissions) {
+              if (item.gymnastId !== user.id || item.status !== 'PENDING') continue;
+              item.clubId = input.selectedClubId;
+              const upload = db.uploads.find((file) => `/api/uploads/${file.id}` === item.videoUrl);
+              if (upload) upload.clubId = input.selectedClubId;
+            }
           }
         }
       }
@@ -462,6 +484,10 @@ export function createWorkflow(
             .sort((a, b) => b.date.localeCompare(a.date)),
         })),
         club: clubDetails(clubId),
+        // Only the club's administrator manages its coaches.
+        coaches: staff.role === 'CLUB_ADMIN'
+          ? db.users.filter((item) => item.role === 'COACH' && item.clubId === clubId && !item.disabled).map((item) => ({ id: item.id, name: item.name, email: item.email, phone: item.phone }))
+          : [],
         notices: db.notices.filter((item) => item.clubId === clubId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
         documents: db.documents.filter((item) => item.clubId === clubId).sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt)),
         certificates: db.certificates.filter((item) => item.clubId === clubId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
@@ -724,6 +750,11 @@ export function createWorkflow(
       const { clubId, gymnast } = requireMember(staff, input.gymnastId);
       const message = (input.message ?? '').trim();
       if (!message) throw new Error('MISSING');
+      if (message.length > MAX_REMINDER) throw new Error('TOO_LONG');
+      const repeatCutoff = now().getTime() - REMINDER_REPEAT_MS;
+      if (db.feeReminders.some((item) => item.gymnastId === gymnast.id && item.message === message && item.status === 'sent' && new Date(item.sentAt).getTime() > repeatCutoff)) {
+        throw new Error('ALREADY_SENT');
+      }
       const club = db.clubs.find((item) => item.id === clubId);
       const to = normalisePhone(gymnast.phone);
       let status: FeeReminderRecord['status'];
@@ -748,7 +779,7 @@ export function createWorkflow(
         id: newId('fee'),
         clubId,
         gymnastId: gymnast.id,
-        message: message.slice(0, 1000),
+        message,
         phone: to,
         status,
         detail: detail.slice(0, 300),
@@ -797,7 +828,10 @@ export function createWorkflow(
     /** Tries again for enquiries that were saved but could not be emailed. */
     async resendContacts() {
       let sent = 0;
+      // A newer enquiry may still be on its way out of submitContact.
+      const cutoff = now().getTime() - CONTACT_RETRY_AFTER_MS;
       for (const item of db.contacts) {
+        if (new Date(item.createdAt).getTime() > cutoff) continue;
         try {
           if (notifiers.enquiry && !item.forwardedAt) {
             await notifiers.enquiry({ name: item.name, phone: item.phone, message: item.message });

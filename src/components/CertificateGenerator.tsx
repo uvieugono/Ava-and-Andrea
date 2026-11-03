@@ -1,3 +1,4 @@
+import { localDate } from '../lib/dates';
 import React, { useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { useGym } from '../context/GymContext';
@@ -75,7 +76,7 @@ const TemplateThumb: React.FC<{ template: CertificateTemplate; clubName: string 
     drawCertificate(ref.current, template, {
       gymnastName: 'Gymnast Name',
       title: 'Certificate of Achievement',
-      awardDate: new Date().toISOString().slice(0, 10),
+      awardDate: localDate(),
       clubName: clubName || 'Your Club',
       coachName: 'Coach',
       logo: null,
@@ -91,7 +92,7 @@ export const CertificateGenerator: React.FC<{ onClose: () => void }> = ({ onClos
   const [gymnastId, setGymnastId] = useState(rosterGymnasts[0]?.id ?? '');
   const [otherName, setOtherName] = useState('');
   const [title, setTitle] = useState('Certificate of Achievement');
-  const [awardDate, setAwardDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [awardDate, setAwardDate] = useState(localDate);
   const [images, setImages] = useState<{ logo: HTMLImageElement | null; signature: HTMLImageElement | null }>({ logo: null, signature: null });
   const [saved, setSaved] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);

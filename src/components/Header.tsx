@@ -71,7 +71,7 @@ export const Header: React.FC = () => {
         ]),
     { id: 'profile', label: 'Club Noticeboard', anchor: 'profile-notices' },
     { id: 'clubs', label: 'Find a Club' },
-    ...(isOperator ? [{ id: 'operator' as NavigationTab, label: 'Club subscriptions' }] : []),
+    ...(isOperator ? [{ id: 'operator' as NavigationTab, label: 'Club approvals and subscriptions' }] : []),
   ];
 
   const openItem = (item: (typeof profileMenu)[number]) => {
@@ -137,6 +137,9 @@ export const Header: React.FC = () => {
                   {item.label}
                 </button>
               ))}
+              <a href="/privacy" target="_blank" rel="noopener noreferrer" role="menuitem" className="block w-full text-left px-3 py-2.5 rounded-xl text-sm text-[#241628] hover:bg-[#F4EEF8]">
+                Privacy Policy
+              </a>
               <button
                 type="button"
                 role="menuitem"

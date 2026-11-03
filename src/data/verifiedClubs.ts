@@ -14,11 +14,12 @@ export interface VerifiedClub {
   facebook: string | null;
   tiktok: string | null;
   youtube: string | null;
-  missing: string[];
 }
 
 // Only details that could be checked against a public page or news caption.
-// Blank fields stay blank. Missing items are listed so they can be filled in later.
+// A blank field is left out of the page. Still wanted for Tee Tumblers: logo, TikTok, YouTube, and
+// street addresses for the Lekki and Meadow Hall sites. For Kofunjo: logo, street addresses, Facebook,
+// TikTok, YouTube.
 export const VERIFIED_CLUBS: VerifiedClub[] = [
   {
     id: 'tee-tumblers-surulere',
@@ -34,7 +35,6 @@ export const VERIFIED_CLUBS: VerifiedClub[] = [
     facebook: 'https://www.facebook.com/Teetumblersgymnastics/',
     tiktok: null,
     youtube: null,
-    missing: ['Club logo', 'TikTok', 'YouTube', 'Street address for the Lekki and Meadow Hall sites'],
   },
   {
     id: 'kofunjo-gymnastics-club',
@@ -50,6 +50,5 @@ export const VERIFIED_CLUBS: VerifiedClub[] = [
     facebook: null,
     tiktok: null,
     youtube: null,
-    missing: ['Club logo', 'Street addresses', 'Facebook', 'TikTok', 'YouTube'],
   },
 ];

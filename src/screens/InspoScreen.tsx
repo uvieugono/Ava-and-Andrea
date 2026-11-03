@@ -208,7 +208,14 @@ export const InspoScreen: React.FC = () => {
           <p className="text-sm text-[#5C4A68]">Gymnastics videos from gymnasts.</p>
         </div>
         <div className="flex gap-2">
-          <button type="button" onClick={() => setShowNotes((value) => !value)} className="px-3 py-2 rounded-full border border-[#E4D7EE] text-sm">
+          <button
+            type="button"
+            onClick={() => {
+              if (!showNotes) gymApi.notifications().then((result) => setNotes(result.notifications)).catch(() => undefined);
+              setShowNotes((value) => !value);
+            }}
+            className="px-3 py-2 rounded-full border border-[#E4D7EE] text-sm"
+          >
             Notifications{notes.length ? ` (${notes.length})` : ''}
           </button>
           <button

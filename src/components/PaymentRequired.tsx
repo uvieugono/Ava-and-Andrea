@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { ClubBilling, gymApi, readAccess, setAccess, setToken } from '../services/gymApi';
+import { ClubBilling, gymApi, readAccess, setAccess } from '../services/gymApi';
+import { SUPPORT_WHATSAPP_DISPLAY, SUPPORT_WHATSAPP_INTERNATIONAL } from '../lib/support';
 
 // Bank transfer details for club subscriptions, exactly as GymTrack gave them.
 const BANK = {
@@ -7,8 +8,8 @@ const BANK = {
   bank: '9 Payment Service Bank',
   accountNumber: '6178205544',
 };
-const EVIDENCE_WHATSAPP_DISPLAY = '0704 065 5667';
-const EVIDENCE_WHATSAPP_INTERNATIONAL = '2347040655667';
+const EVIDENCE_WHATSAPP_DISPLAY = SUPPORT_WHATSAPP_DISPLAY;
+const EVIDENCE_WHATSAPP_INTERNATIONAL = SUPPORT_WHATSAPP_INTERNATIONAL;
 
 const formatDate = (value: string | null) =>
   value ? new Date(value).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' }) : 'not recorded';
@@ -89,7 +90,7 @@ export const PaymentRequired: React.FC<{ onUnlock: () => void; onLogout: () => v
         <button type="button" disabled={busy} onClick={check} className="w-full py-3 rounded-full border border-[#5C2A6E] text-[#5C2A6E] font-semibold disabled:opacity-60">
           {busy ? 'Checking…' : 'Check if my subscription is active'}
         </button>
-        <button type="button" onClick={() => { setToken(null); onLogout(); }} className="w-full py-2 text-sm text-[#5C4A68]">Log out</button>
+        <button type="button" onClick={onLogout} className="w-full py-2 text-sm text-[#5C4A68]">Log out</button>
       </div>
     </div>
   );

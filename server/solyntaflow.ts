@@ -11,6 +11,10 @@ import type { Notifiers } from './workflow.ts';
  * Settings: SOLYNTAFLOW_TOKEN (a GymTrack-company user's API token) and, if it is
  * not the live system, SOLYNTAFLOW_API_URL.
  */
+const CALL_TIMEOUT_MS = 20000;
+
+class RefusedError extends Error {}
+
 export function solyntaflowNotifiers(env: NodeJS.ProcessEnv = process.env, fetcher: typeof fetch = fetch): Pick<Notifiers, 'enquiry' | 'whatsapp'> | null {
   const token = env.SOLYNTAFLOW_TOKEN;
   if (!token) return null;
@@ -22,11 +26,14 @@ export function solyntaflowNotifiers(env: NodeJS.ProcessEnv = process.env, fetch
       method: 'POST',
       headers: { authorization: `Token ${token}`, 'content-type': 'application/json' },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
     });
     const payload = (await response.json().catch(() => ({}))) as Record<string, any>;
     if (!response.ok) {
       const reason = typeof payload.detail === 'string' ? payload.detail : JSON.stringify(payload).slice(0, 200);
-      throw new Error(`SolyntaFlow ${response.status}: ${reason}`);
+      const message = `SolyntaFlow ${response.status}: ${reason}`;
+      // 4xx: SolyntaFlow turned the request down, so nothing went out.
+      throw response.status < 500 ? new RefusedError(message) : new Error(message);
     }
     return payload;
   }
@@ -70,7 +77,10 @@ export function solyntaflowNotifiers(env: NodeJS.ProcessEnv = process.env, fetch
           if (done.status === 'sent' || result.delivery_status === 'unknown') return done;
           templateFailure = done.detail;
         } catch (error) {
-          templateFailure = error instanceof Error ? error.message : 'template send failed';
+          const reason = error instanceof Error ? error.message : 'template send failed';
+          // No answer, or SolyntaFlow failed part way: it may have gone out, so never send a second copy.
+          if (!(error instanceof RefusedError)) return { status: 'failed', detail: `Not confirmed: ${reason}` };
+          templateFailure = reason;
         }
       }
 

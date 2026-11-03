@@ -90,3 +90,13 @@ If the personal Drive is full, uploads fail with `DRIVE_QUOTA`.
 ## Local development
 
 Leave `GYMTRACK_DRIVE_FOLDER_ID` unset to keep uploads on disk under `GYMTRACK_UPLOADS` (default `data/uploads`). That disk is wiped on Cloud Run, which is why production uses Drive.
+
+## Operators
+
+`GYMTRACK_OPERATOR_EMAILS` lists the sign-in emails of GymTrack operators. They get **Club approvals and subscriptions** in the profile menu.
+
+- **New clubs** wait for approval. Until then gymnasts cannot choose the club, and its staff see no gymnasts' data. The seven free days start on approval. Each new club also files a ticket on GymTrack's SolyntaFlow company. Clubs from before this check count as approved.
+- **Password resets.** With `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS` and `APP_URL` all set, "Forgot your password?" emails a link that works once for an hour. Without them the request files a ticket, and an operator makes a link on the same page (it works once for 24 hours) and sends it to the telephone number on the account.
+- **Coaches** are added by the club administrator under Coaches on the Club Dashboard, and sign in with Club sign in.
+
+Clubs in `server/dataCleanups.ts` are removed when the server starts. It does nothing once they are gone.

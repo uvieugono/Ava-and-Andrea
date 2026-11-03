@@ -9,9 +9,19 @@ const DUE_KEY = 'gymtrack_payment_due';
 const DEV_KEY = 'gymtrack_dev_match';
 const UNTIL_KEY = 'gymtrack_access_until';
 
+const MEDIA_KEY = 'gymtrack_media_token';
+
 export function setToken(token: string | null) {
   if (token) sessionStorage.setItem(TOKEN_KEY, token);
-  else sessionStorage.removeItem(TOKEN_KEY);
+  else {
+    sessionStorage.removeItem(TOKEN_KEY);
+    sessionStorage.removeItem(MEDIA_KEY);
+  }
+}
+
+/** The key that goes in file links. It opens files only, never the account. */
+export function setMediaToken(token: string | null | undefined) {
+  if (token) sessionStorage.setItem(MEDIA_KEY, token);
 }
 
 export function setAccess(status: string, payment: PaymentInstructions | null, devMatch = false, periodEnd: string | null = null) {
@@ -110,6 +120,8 @@ export interface CompetitionView {
 export interface ClubBilling {
   id: string;
   name: string;
+  approval: 'pending' | 'approved' | 'rejected';
+  rejectionReason: string | null;
   trialStartedAt: string | null;
   trialEndsAt: string | null;
   paidUntil: string | null;
@@ -129,7 +141,18 @@ export interface OperatorClub {
   trialEndsAt: string | null;
   paidUntil: string | null;
   status: 'trial' | 'paid' | 'expired';
+  approval: 'pending' | 'approved' | 'rejected';
+  rejectionReason: string | null;
+  members: number;
   subscriptions: { id: string; startsAt: string; endsAt: string; months: number; amountNgn: number; reference: string; note: string; activatedBy: string; activatedAt: string }[];
+}
+
+export interface OperatorResetLink {
+  token: string;
+  name: string;
+  email: string;
+  phone: string;
+  expiresInHours: number;
 }
 
 export interface ClubDetails {
@@ -190,6 +213,8 @@ export interface ClubGymnastView {
 export interface ClubOverview {
   gymnasts: ClubGymnastView[];
   club: ClubDetails;
+  /** Only the club administrator gets this list. */
+  coaches: { id: string; name: string; email: string; phone: string }[];
   certificates: CertificateView[];
   drills: DrillView[];
   notices: NoticeView[];
@@ -215,7 +240,7 @@ export interface ApiUser {
   clubName: string | null;
   status: string;
   /** 'free': gymnasts never pay. Club accounts: 'trial', then 'paid' or 'locked'. */
-  access?: 'trial' | 'paid' | 'locked' | 'club' | 'free';
+  access?: 'trial' | 'paid' | 'locked' | 'club' | 'free' | 'pending' | 'rejected';
   /** Club accounts: the club's trial, subscription and monthly price. */
   club?: ClubBilling | null;
   /** May check club bank transfers and switch subscriptions on. */
@@ -241,19 +266,26 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 export const gymApi = {
-  registerClub: (input: { clubName: string; city: string; adminName: string; email: string; password: string; phone?: string }) =>
-    request<{ token: string; user: ApiUser; payment: PaymentInstructions }>('/api/auth/register-club', { method: 'POST', body: JSON.stringify(input) }),
-  signupStudent: (input: { name: string; email: string; password: string; phone?: string; level?: number; dateOfBirth: string; selectedClubId?: string | null }) =>
-    request<{ token: string; user: ApiUser; payment: PaymentInstructions; devMatch: boolean }>('/api/auth/signup-student', { method: 'POST', body: JSON.stringify(input) }),
+  registerClub: (input: { clubName: string; city: string; adminName: string; email: string; password: string; phone?: string; acceptedPrivacy: boolean }) =>
+    request<{ token: string; mediaToken: string; user: ApiUser; payment: PaymentInstructions }>('/api/auth/register-club', { method: 'POST', body: JSON.stringify(input) }),
+  signupStudent: (input: { name: string; email: string; password: string; phone?: string; level?: number; dateOfBirth: string; selectedClubId?: string | null; acceptedPrivacy: boolean }) =>
+    request<{ token: string; mediaToken: string; user: ApiUser; payment: PaymentInstructions; devMatch: boolean }>('/api/auth/signup-student', { method: 'POST', body: JSON.stringify(input) }),
   login: (email: string, password: string) =>
-    request<{ token: string; user: ApiUser; payment: PaymentInstructions | null }>('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
-  me: () => request<{ user: ApiUser; payment: PaymentInstructions | null }>('/api/me'),
+    request<{ token: string; mediaToken: string; user: ApiUser; payment: PaymentInstructions | null }>('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
+  logout: () => request('/api/auth/logout', { method: 'POST' }),
+  forgotPassword: (email: string) => request<{ ok: boolean; emailed: boolean }>('/api/auth/forgot-password', { method: 'POST', body: JSON.stringify({ email }) }),
+  resetPassword: (token: string, password: string) => request('/api/auth/reset-password', { method: 'POST', body: JSON.stringify({ token, password }) }),
+  changePassword: (current: string, next: string) => request('/api/me/password', { method: 'POST', body: JSON.stringify({ current, next }) }),
+  addCoach: (input: { name: string; email: string; phone: string; password: string }) => request('/api/club/coaches', { method: 'POST', body: JSON.stringify(input) }),
+  removeCoach: (id: string) => request(`/api/club/coaches/${id}`, { method: 'DELETE' }),
+  approveClub: (id: string) => request(`/api/operator/clubs/${id}/approve`, { method: 'POST' }),
+  rejectClub: (id: string, reason: string) => request(`/api/operator/clubs/${id}/reject`, { method: 'POST', body: JSON.stringify({ reason }) }),
+  operatorResetLink: (email: string) => request<OperatorResetLink>('/api/operator/password-reset', { method: 'POST', body: JSON.stringify({ email }) }),
+  me: () => request<{ user: ApiUser; payment: PaymentInstructions | null; mediaToken?: string }>('/api/me'),
   addStudents: (students: { name: string; email: string; password: string; dateOfBirth: string; level?: number; phone?: string }[]) =>
     request<{ payment: PaymentInstructions; devMatch: boolean }>('/api/clubs/students', { method: 'POST', body: JSON.stringify({ students }) }),
   devMatch: (reference: string, amount: number) =>
     request('/api/payments/dev-match', { method: 'POST', body: JSON.stringify({ reference, amount }) }),
-  acceptParent: (studentId: string, parentEmail: string) =>
-    request(`/api/students/${studentId}/parent`, { method: 'POST', body: JSON.stringify({ parentEmail }) }),
   events: (q: string) => request<{ featured: { id: string; name: string } | null }>(`/api/events?q=${encodeURIComponent(q)}`),
   clubs: (lat?: number, lng?: number) =>
     request<{ clubs: { id: string; name: string; city: string; km?: number }[] }>(
@@ -332,10 +364,10 @@ export const gymApi = {
     request<{ ok: boolean }>('/api/contact', { method: 'POST', body: JSON.stringify(input) }),
 };
 
-/** A link a <video> or <a> can use: private files need the sign-in token in the address. */
+/** A link a <video> or <a> can use: private files need a key in the address. */
 export function mediaUrl(url: string) {
   if (!url.startsWith('/api/uploads/')) return url;
-  const token = getToken();
+  const token = sessionStorage.getItem(MEDIA_KEY);
   return token ? `${url}?token=${encodeURIComponent(token)}` : url;
 }
 
@@ -351,7 +383,7 @@ export const MAX_VIDEO_MB = 80;
 
 const UPLOAD_MESSAGES: Record<string, string> = {
   FILE_TOO_LARGE: `That file is too large. Videos can be up to ${MAX_VIDEO_MB} MB.`,
-  FILE_TYPE: 'That file type is not supported. Use an MP4, MOV, WebM or 3GP video.',
+  FILE_TYPE: 'That file type is not supported. Videos can be MP4, MOV, WebM or 3GP. Documents can be PDF, Word, Excel, CSV, text, PNG or JPG.',
   EMPTY_FILE: 'That file is empty.',
   PAYMENT_REQUIRED: 'Your free week has ended. Payment is needed before you can upload.',
   UNAUTHORIZED: 'You are signed out. Sign in again to upload.',

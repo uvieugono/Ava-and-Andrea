@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { Readable } from 'stream';
+import { Readable, pipeline } from 'stream';
 import type { Request, Response } from 'express';
 import { DRIVE_AUTH_MESSAGE, StorageError, createDriveTokenSource, driveSignInProblem } from './driveAuth.ts';
 import type { UploadRecord } from './workflow.ts';
@@ -193,7 +193,10 @@ export function driveStorage(folderId: string, token: TokenSource, fetcher: type
         res.end();
         return;
       }
-      Readable.fromWeb(upstream.body as never).pipe(res);
+      // pipeline, not pipe: Drive dropping the connection part way must end this one response, not the server.
+      pipeline(Readable.fromWeb(upstream.body as never), res, (error) => {
+        if (error && !res.destroyed) console.error('Stored file could not be sent', error.message);
+      });
     },
   };
 }

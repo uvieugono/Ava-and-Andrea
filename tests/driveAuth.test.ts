@@ -146,7 +146,7 @@ test('an upload through the API returns DRIVE_AUTH when the refresh token is ref
     throw new StorageError('DRIVE_AUTH', DRIVE_AUTH_MESSAGE);
   });
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gymtrack-auth-'));
-  const app = await createApp({ dbPath: path.join(dir, 'db.json'), storage: drive, devMatch: false, notifiers: {} });
+  const app = await createApp({ clubApproval: false, dbPath: path.join(dir, 'db.json'), storage: drive, devMatch: false, notifiers: {} });
   const server = app.listen(0);
   await once(server, 'listening');
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -221,6 +221,7 @@ test('the refresh token file carries a warning and is gitignored', () => {
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gymtrack-token-'));
   const file = writeRefreshTokenFile('test-refresh-token', path.join(dir, REFRESH_TOKEN_FILENAME));
-  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  // Windows has no owner-only file mode.
+  if (process.platform !== 'win32') assert.equal(fs.statSync(file).mode & 0o777, 0o600);
   assert.match(fs.readFileSync(path.join(process.cwd(), '.gitignore'), 'utf8'), new RegExp(`^${REFRESH_TOKEN_FILENAME.replace('.', '\\.')}$`, 'm'));
 });

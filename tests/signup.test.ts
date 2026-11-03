@@ -8,6 +8,7 @@ import { createBoundStore, emptyDb } from '../server/store.ts';
 async function start() {
   let now = new Date('2026-10-10T12:00:00Z');
   const app = await createApp({
+    clubApproval: false,
     dbPath: `data/test-${Date.now()}-${Math.random()}.json`,
     webhookSecret: 'test-secret',
     devMatch: false,
@@ -42,7 +43,7 @@ async function json(response: Response) {
 
 test('login opens an account that never received a trial week', async () => {
   const db = emptyDb();
-  const store = createBoundStore(db, async () => {});
+  const store = createBoundStore(db, async () => {}, undefined, {}, { clubApproval: false });
   await store.registerClub({
     clubName: 'Old Club',
     city: 'Lagos',
@@ -61,7 +62,7 @@ test('login opens an account that never received a trial week', async () => {
 
 test('a club member stays in the app without paying, even after the trials end', async () => {
   const db = emptyDb();
-  const store = createBoundStore(db, async () => {});
+  const store = createBoundStore(db, async () => {}, undefined, {}, { clubApproval: false });
   await store.registerClub({
     clubName: 'Trial Club',
     city: 'Lagos',

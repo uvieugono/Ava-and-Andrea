@@ -13,6 +13,7 @@ import type { Notifiers } from '../server/workflow.ts';
 async function start(notifiers: Notifiers = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gymtrack-wf-'));
   const app = await createApp({
+    clubApproval: false,
     dbPath: path.join(dir, 'db.json'),
     uploadDir: path.join(dir, 'uploads'),
     webhookSecret: 'test-secret',
@@ -46,7 +47,7 @@ async function start(notifiers: Notifiers = {}) {
       clubName: name, city: 'Lagos', adminName: `${name} admin`, email, password: 'club-pass-1', phone: '08030000000',
     });
     assert.equal(created.status, 201);
-    return { token: created.body.token as string, clubId: created.body.club.id as string };
+    return { token: created.body.token as string, mediaToken: created.body.mediaToken as string, clubId: created.body.club.id as string };
   }
 
   async function gymnast(email: string, selectedClubId: string | null, phone = '08031234567') {
@@ -54,7 +55,7 @@ async function start(notifiers: Notifiers = {}) {
       name: email.split('@')[0], email, password: 'gym-pass-1', phone, dateOfBirth: '2014-01-01', level: 1, selectedClubId,
     });
     assert.equal(created.status, 201);
-    return { token: created.body.token as string, id: created.body.user.id as string, user: created.body.user };
+    return { token: created.body.token as string, mediaToken: created.body.mediaToken as string, id: created.body.user.id as string, user: created.body.user };
   }
 
   return { server, base, call, upload, club, gymnast };
@@ -155,15 +156,15 @@ test('gymnasts cannot use club-only features or read each other\'s evidence', as
     assert.equal((await t.call('GET', '/api/club/overview')).status, 401);
 
     const file = await t.upload(ava.token);
-    assert.equal((await fetch(`${t.base}${file.body.url}?token=${ava.token}`)).status, 200);
-    assert.equal((await fetch(`${t.base}${file.body.url}?token=${bola.token}`)).status, 403);
+    assert.equal((await fetch(`${t.base}${file.body.url}?token=${ava.mediaToken}`)).status, 200);
+    assert.equal((await fetch(`${t.base}${file.body.url}?token=${bola.mediaToken}`)).status, 403);
     assert.equal((await fetch(`${t.base}${file.body.url}`)).status, 401);
     // The gymnast's own club can open it; another club cannot
     const otherClub = await t.club('Other Club', 'other2@club.test');
-    assert.equal((await fetch(`${t.base}${file.body.url}?token=${otherClub.token}`)).status, 403);
+    assert.equal((await fetch(`${t.base}${file.body.url}?token=${otherClub.mediaToken}`)).status, 403);
     const skill = requiredSkills({ level: 1 })[0];
     await t.call('POST', `/api/skills/${skill.id}/submit`, ava.token, { videoUrl: file.body.url });
-    assert.equal((await fetch(`${t.base}${file.body.url}?token=${club.token}`)).status, 200);
+    assert.equal((await fetch(`${t.base}${file.body.url}?token=${club.mediaToken}`)).status, 200);
     // Someone else's upload cannot be submitted
     assert.equal((await t.call('POST', `/api/skills/${skill.id}/submit`, bola.token, { videoUrl: file.body.url })).status, 400);
   } finally {
@@ -387,7 +388,7 @@ test('Google Drive storage: files go to the one folder and are served back only 
   const drive = driveStorage('FOLDER', async () => 'tok', fake);
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gymtrack-drive-'));
-  const app = await createApp({ dbPath: path.join(dir, 'db.json'), storage: drive, devMatch: false, notifiers: {} });
+  const app = await createApp({ clubApproval: false, dbPath: path.join(dir, 'db.json'), storage: drive, devMatch: false, notifiers: {} });
   const server = app.listen(0);
   await once(server, 'listening');
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -408,14 +409,14 @@ test('Google Drive storage: files go to the one folder and are served back only 
 
     // Served through GymTrack with its own access check, including video range requests
     assert.equal((await fetch(`${base}${url}`)).status, 401);
-    const whole = await fetch(`${base}${url}?token=${ava.body.token}`);
+    const whole = await fetch(`${base}${url}?token=${ava.body.mediaToken}`);
     assert.equal(whole.status, 200);
     assert.equal(Buffer.from(await whole.arrayBuffer()).toString(), '0123456789');
-    const part = await fetch(`${base}${url}?token=${ava.body.token}`, { headers: { range: 'bytes=2-5' } });
+    const part = await fetch(`${base}${url}?token=${ava.body.mediaToken}`, { headers: { range: 'bytes=2-5' } });
     assert.equal(part.status, 206);
     assert.equal(Buffer.from(await part.arrayBuffer()).toString(), '2345');
     const other = await call('POST', '/api/auth/register-club', undefined, { clubName: 'B', city: 'Lagos', adminName: 'Bd', email: 'drive2@club.test', password: 'club-pass-1', phone: '0803000001' });
-    assert.equal((await fetch(`${base}${url}?token=${other.body.token}`)).status, 403);
+    assert.equal((await fetch(`${base}${url}?token=${other.body.mediaToken}`)).status, 403);
   } finally {
     server.close();
   }

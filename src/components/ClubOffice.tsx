@@ -2,7 +2,9 @@ import React, { useRef, useState } from 'react';
 import { Award, Banknote, ClipboardCheck, FolderOpen, Megaphone, Trash2 } from 'lucide-react';
 import { useGym } from '../context/GymContext';
 import { mediaUrl } from '../services/gymApi';
+import { localDate } from '../lib/dates';
 import { CertificateGenerator, ClubCertificateDetails } from './CertificateGenerator';
+import { ClubCoaches } from './ClubCoaches';
 import { downloadImage, printImage } from '../lib/certificate';
 
 type Note = { ok: boolean; message: string } | null;
@@ -37,7 +39,7 @@ export const ClubOffice: React.FC<{ afterAttendance?: React.ReactNode }> = ({ af
     deleteDocument,
   } = useGym();
   const [confirmDocument, setConfirmDocument] = useState<string | null>(null);
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(localDate);
   const [noticeTitle, setNoticeTitle] = useState('');
   const [noticeBody, setNoticeBody] = useState('');
   const [feeId, setFeeId] = useState('');
@@ -150,7 +152,7 @@ export const ClubOffice: React.FC<{ afterAttendance?: React.ReactNode }> = ({ af
             {feeGymnast.phone ? `Will be sent to ${feeGymnast.phone}.` : 'This gymnast has no telephone number on file, so nothing can be sent.'}
           </p>
         )}
-        <textarea value={feeMessage} onChange={(event) => setFeeMessage(event.target.value)} className="w-full rounded-xl border border-[#E4D7EE] px-3 py-2 text-sm" aria-label="Message with the fee amount" />
+        <textarea value={feeMessage} maxLength={400} onChange={(event) => setFeeMessage(event.target.value)} className="w-full rounded-xl border border-[#E4D7EE] px-3 py-2 text-sm" aria-label="Message with the fee amount" />
         <button
           type="button"
           disabled={!feeGymnast || !feeMessage.trim() || busy === 'fee'}
@@ -226,6 +228,8 @@ export const ClubOffice: React.FC<{ afterAttendance?: React.ReactNode }> = ({ af
         ))}
         <Message id="delete-notice" />
       </section>
+
+      <ClubCoaches />
 
       <section id="certificates" className={SECTION}>
         <SectionTitle icon={<Award className="w-5 h-5" />}>Certificates</SectionTitle>

@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useGym } from '../context/GymContext';
 import { USAGLevel } from '../types';
 import { Avatar } from '../components/Avatar';
+import { ChangePassword } from '../components/PasswordRecovery';
 import { LinkedText } from '../components/LinkedText';
 import { downloadImage, printImage } from '../lib/certificate';
 import { gymApi, InspoPost, mediaUrl } from '../services/gymApi';
@@ -11,7 +12,6 @@ import {
   Edit3, 
   Check, 
   ShieldCheck, 
-  Bell, 
   LogOut, 
   Award, 
   Upload, 
@@ -472,7 +472,7 @@ export const ProfileScreen: React.FC = () => {
                 <video src={mediaUrl(post.videoUrl)} controls preload="metadata" className="w-full aspect-video bg-black" />
                 <div className="p-3 space-y-2">
                   <p className="text-sm text-[#241628]">{post.skill}</p>
-                  <p className="text-xs text-[#5C4A68]">{post.visibility === 'club' ? `Only ${post.audienceClubName ?? 'one club'}` : 'All clubs'} · {post.likes} likes</p>
+                  <p className="text-xs text-[#5C4A68]">{post.visibility === 'club' ? `Only ${post.audienceClubName ?? 'one club'}` : 'All clubs'} · {post.likes} {post.likes === 1 ? 'like' : 'likes'}</p>
                   {confirmVideo === post.id ? (
                     <span className="flex gap-2">
                       <button type="button" onClick={() => deleteVideo(post)} className="px-3 py-2 rounded-full bg-red-700 text-white text-sm">Delete for good</button>
@@ -587,24 +587,6 @@ export const ProfileScreen: React.FC = () => {
 
       {/* Account & Security Section */}
       <div className="bg-white rounded-3xl p-5 border border-[#E4D7EE] space-y-3 shadow-2xs">
-        <div className="flex items-center justify-between p-2 rounded-2xl hover:bg-[#F4EEF8] text-xs text-[#241628] transition-colors">
-          <div className="flex items-center gap-2.5">
-            <ShieldCheck className="w-4 h-4 text-[#5C2A6E]" />
-            <span className="font-semibold">Gymnastics Federation SafeSport Account</span>
-          </div>
-          <span className="text-emerald-600 font-extrabold text-[11px] bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
-            Verified
-          </span>
-        </div>
-
-        <div className="flex items-center justify-between p-2 rounded-2xl hover:bg-[#F4EEF8] text-xs text-[#241628] transition-colors">
-          <div className="flex items-center gap-2.5">
-            <Bell className="w-4 h-4 text-[#5C2A6E]" />
-            <span className="font-semibold">Daily Training Reminders</span>
-          </div>
-          <span className="text-xs text-[#5C4A68] font-medium">5:00 PM West Africa Time</span>
-        </div>
-
         {/* Account type (set when the account was created) */}
         <div className="p-3 rounded-2xl bg-[#F7F4FB] border border-[#E4D7EE]">
           <div className="flex items-center justify-between text-xs">
@@ -614,6 +596,10 @@ export const ProfileScreen: React.FC = () => {
             </span>
           </div>
         </div>
+
+        <ChangePassword />
+
+        <p className="px-3 text-xs"><a href="/privacy" target="_blank" rel="noopener noreferrer" className="font-bold text-[#3E1B4A] underline">Privacy Policy</a></p>
 
         <button
           id="btn-profile-logout"
