@@ -1014,6 +1014,51 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
       return { clubs: ids.size, staff: staffIds.size, gymnastsKept, files };
     },
 
+    /**
+     * Removes gymnast accounts and everything that is theirs. Nobody else's posts or records
+     * change, and an id that is not a gymnast is ignored. Returns the stored files to delete.
+     */
+    async removeGymnasts(userIds: string[]) {
+      const ids = new Set(db.users.filter((user) => user.role === 'GYMNAST' && userIds.includes(user.id)).map((user) => user.id));
+      if (ids.size === 0) return { gymnasts: 0, posts: 0, files: [] as UploadRecord[] };
+      const removedPosts = new Set(db.posts.filter((post) => ids.has(post.authorId)).map((post) => post.id));
+      const removedVideos = new Set(db.posts.filter((post) => removedPosts.has(post.id)).map((post) => post.videoUrl));
+      for (const item of db.submissions) if (ids.has(item.gymnastId)) removedVideos.add(item.videoUrl);
+      db.posts = db.posts.filter((post) => !removedPosts.has(post.id));
+      db.likes = db.likes.filter((item) => !removedPosts.has(item.postId) && !ids.has(item.userId));
+      db.saves = db.saves.filter((item) => !removedPosts.has(item.postId) && !ids.has(item.userId));
+      const removedComments = new Set(db.comments.filter((item) => removedPosts.has(item.postId) || ids.has(item.authorId)).map((item) => item.id));
+      db.comments = db.comments.filter((item) => !removedComments.has(item.id));
+      db.commentReports = db.commentReports.filter((item) => !removedComments.has(item.commentId) && !ids.has(item.reporterId));
+      db.notifications = db.notifications.filter((item) => !ids.has(item.userId) && !ids.has(item.fromUserId) && !(item.postId && removedPosts.has(item.postId)));
+      db.follows = db.follows.filter((item) => !ids.has(item.followerId) && !(item.targetUserId && ids.has(item.targetUserId)));
+      db.blocks = db.blocks.filter((item) => !ids.has(item.blockerId) && !ids.has(item.blockedId));
+      db.submissions = db.submissions.filter((item) => !ids.has(item.gymnastId));
+      db.competitions = db.competitions.filter((item) => !ids.has(item.gymnastId));
+      db.attendance = db.attendance.filter((item) => !ids.has(item.gymnastId));
+      db.feeReminders = db.feeReminders.filter((item) => !ids.has(item.gymnastId));
+      db.certificates = db.certificates.filter((item) => !item.gymnastId || !ids.has(item.gymnastId));
+      for (const drill of db.drills) drill.gymnastIds = drill.gymnastIds.filter((gymnastId) => !ids.has(gymnastId));
+      db.payments = db.payments.filter((item) => !item.studentIds.some((studentId) => ids.has(studentId)));
+      db.uploadSessions = db.uploadSessions.filter((item) => !ids.has(item.ownerId));
+      db.tokens = db.tokens.filter((item) => !ids.has(item.userId));
+      db.passwordResets = db.passwordResets.filter((item) => !ids.has(item.userId));
+
+      // Their own uploads go, unless something of someone else's still points at the file.
+      const inUse = new Set<string>();
+      for (const post of db.posts) inUse.add(post.videoUrl);
+      for (const item of db.submissions) inUse.add(item.videoUrl);
+      const files = db.uploads.filter((upload) => {
+        const url = `/api/uploads/${upload.id}`;
+        return (ids.has(upload.ownerId) || removedVideos.has(url)) && !inUse.has(url);
+      });
+      const gone = new Set(files);
+      db.uploads = db.uploads.filter((upload) => !gone.has(upload));
+      db.users = db.users.filter((user) => !ids.has(user.id));
+      await save();
+      return { gymnasts: ids.size, posts: removedPosts.size, files };
+    },
+
     userByToken,
     userByMediaToken,
     mediaTokenOf,

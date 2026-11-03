@@ -3,7 +3,7 @@ import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import test, { after } from 'node:test';
 import { createApp } from '../server/createApp.ts';
-import { REMOVED_CLUB_IDS } from '../server/dataCleanups.ts';
+import { REMOVED_CLUB_IDS, REMOVED_GYMNAST_IDS } from '../server/dataCleanups.ts';
 import type { Notifiers } from '../server/workflow.ts';
 
 const PASSWORD = 'correct-horse';
@@ -20,13 +20,14 @@ after(() => {
 
 let counter = 0;
 
-async function start(options: { notifiers?: Notifiers; dbPath?: string; removeClubIds?: string[]; now?: () => Date } = {}) {
+async function start(options: { notifiers?: Notifiers; dbPath?: string; removeClubIds?: string[]; removeGymnastIds?: string[]; now?: () => Date } = {}) {
   const app = await createApp({
     dbPath: options.dbPath ?? `data/test-launch-${Date.now()}-${Math.random()}.json`,
     webhookSecret: 'test-secret',
     devMatch: false,
     notifiers: options.notifiers ?? {},
     removeClubIds: options.removeClubIds,
+    removeGymnastIds: options.removeGymnastIds,
     now: options.now,
   });
   const server = app.listen(0);
@@ -319,4 +320,42 @@ test('deleting a Connect video removes the file too', async () => {
   assert.equal((await fetch(app.base + video.url, { headers: { authorization: `Bearer ${child.token}` } })).status, 200);
   assert.equal((await app.call('DELETE', `/api/inspo/${post.id}`, child.token)).status, 200);
   assert.equal((await fetch(app.base + video.url, { headers: { authorization: `Bearer ${child.token}` } })).status, 404);
+});
+
+test('removing a made-up gymnast takes everything of theirs and nobody else\'s', async () => {
+  assert.equal(REMOVED_GYMNAST_IDS.length, 4);
+  const dbPath = `data/test-launch-gym-${Date.now()}.json`;
+  const first = await start({ dbPath });
+  const club = await first.approved('Stays Gym');
+  const fake = await first.gymnast(club.user.clubId);
+  const real = await first.gymnast(club.user.clubId);
+  const upload = (token: string) => fetch(`${first.base}/api/uploads?scope=public&name=clip.mp4`, { method: 'POST', headers: { 'content-type': 'video/mp4', authorization: `Bearer ${token}` }, body: Buffer.from('x') }).then((r) => r.json()) as Promise<{ url: string }>;
+  const fakeVideo = await upload(fake.token);
+  const realVideo = await upload(real.token);
+  const fakePost = (await first.call('POST', '/api/inspo', fake.token, { videoUrl: fakeVideo.url, skill: 'Bridge', category: 'Floor', visibility: 'everyone' })).body.post;
+  const realPost = (await first.call('POST', '/api/inspo', real.token, { videoUrl: realVideo.url, skill: 'Roll', category: 'Floor', visibility: 'everyone' })).body.post;
+  await first.call('POST', `/api/inspo/${realPost.id}/comments`, fake.token, { text: 'From the fake one' });
+  await first.call('POST', `/api/inspo/${realPost.id}/comments`, club.token, { text: 'From the club' });
+  await first.call('POST', `/api/inspo/${realPost.id}/like`, fake.token);
+  await first.call('POST', `/api/inspo/${fakePost.id}/save`, real.token);
+  await first.call('POST', '/api/follows', fake.token, { userId: real.user.id });
+  await first.call('POST', '/api/club/attendance', club.token, { gymnastId: fake.user.id, date: '2026-11-03', present: true });
+  await first.call('POST', '/api/club/attendance', club.token, { gymnastId: real.user.id, date: '2026-11-03', present: true });
+
+  // A club's id and a staff id in the list are ignored: only gymnasts can be removed this way.
+  const second = await start({ dbPath, removeGymnastIds: [fake.user.id, club.user.id, 'usr_not_there'] });
+  assert.equal((await second.call('GET', '/api/me', fake.token)).status, 401);
+  assert.equal((await second.call('POST', '/api/auth/login', null, { email: fake.email, password: PASSWORD })).status, 401);
+  assert.equal((await fetch(second.base + fakeVideo.url, { headers: { authorization: `Bearer ${real.token}` } })).status, 404);
+  assert.equal((await second.call('GET', `/api/inspo/post/${fakePost.id}`, real.token)).status, 404);
+  assert.equal((await second.call('GET', '/api/inspo/saved', real.token)).body.posts.length, 0);
+
+  const kept = (await second.call('GET', `/api/inspo/post/${realPost.id}`, real.token)).body.post;
+  assert.deepEqual(kept.comments.map((item: { text: string }) => item.text), ['From the club']);
+  assert.equal(kept.likes, 0);
+  assert.equal((await fetch(second.base + realVideo.url, { headers: { authorization: `Bearer ${real.token}` } })).status, 200);
+  const overview = (await second.call('GET', '/api/club/overview', club.token)).body;
+  assert.deepEqual(overview.gymnasts.map((item: { id: string }) => item.id), [real.user.id]);
+  assert.deepEqual(overview.attendance.map((item: { gymnastId: string }) => item.gymnastId), [real.user.id]);
+  assert.equal((await second.call('GET', '/api/me', club.token)).status, 200);
 });

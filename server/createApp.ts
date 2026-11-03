@@ -4,7 +4,7 @@ import os from 'os';
 import path from 'path';
 import { randomBytes } from 'crypto';
 import { GymStore, INSPO_CATEGORIES, openStore } from './store.ts';
-import { REMOVED_CLUB_IDS } from './dataCleanups.ts';
+import { REMOVED_CLUB_IDS, REMOVED_GYMNAST_IDS } from './dataCleanups.ts';
 import { openPostgresStore } from './postgres.ts';
 import { defaultNotifiers } from './notifiers.ts';
 import { defaultStorage, StorageError, type Storage } from './storage.ts';
@@ -106,7 +106,7 @@ function counter(limit: number, windowMs: number, now: () => Date) {
   };
 }
 
-export async function createApp(options?: { dbPath?: string; databaseUrl?: string; webhookSecret?: string; devMatch?: boolean; now?: () => Date; notifiers?: Notifiers; uploadDir?: string; storage?: Storage; clubApproval?: boolean; removeClubIds?: string[] }) {
+export async function createApp(options?: { dbPath?: string; databaseUrl?: string; webhookSecret?: string; devMatch?: boolean; now?: () => Date; notifiers?: Notifiers; uploadDir?: string; storage?: Storage; clubApproval?: boolean; removeClubIds?: string[]; removeGymnastIds?: string[] }) {
   const dbPath = options?.dbPath || process.env.GYMTRACK_DB || path.join(process.cwd(), 'data', 'gymtrack.json');
   const databaseUrl = options?.databaseUrl ?? (options?.dbPath ? undefined : process.env.DATABASE_URL);
   const now = options?.now ?? (() => new Date());
@@ -119,6 +119,13 @@ export async function createApp(options?: { dbPath?: string; databaseUrl?: strin
   if (removed.clubs > 0) {
     console.log(`Removed ${removed.clubs} clubs, ${removed.staff} staff accounts and ${removed.files.length} files. ${removed.gymnastsKept} gymnasts kept their accounts.`);
     for (const file of removed.files) {
+      storage.remove(file).catch((error) => console.error('Stored file could not be deleted', error instanceof Error ? error.message : error));
+    }
+  }
+  const removedGymnasts = await store.removeGymnasts(options?.removeGymnastIds ?? REMOVED_GYMNAST_IDS);
+  if (removedGymnasts.gymnasts > 0) {
+    console.log(`Removed ${removedGymnasts.gymnasts} gymnast accounts, ${removedGymnasts.posts} posts and ${removedGymnasts.files.length} files.`);
+    for (const file of removedGymnasts.files) {
       storage.remove(file).catch((error) => console.error('Stored file could not be deleted', error instanceof Error ? error.message : error));
     }
   }
