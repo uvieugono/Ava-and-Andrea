@@ -77,7 +77,7 @@ export const AddStudentsPanel: React.FC = () => {
         <button disabled={busy} className="px-4 py-2 rounded-full bg-[#5C2A6E] text-white text-sm font-bold disabled:opacity-60">{busy ? 'Adding…' : 'Add gymnast'}</button>
         {payment && (
           <div className="text-sm space-y-1">
-            <p>{name} can sign in now and use the app during the free week.</p>
+            <p>{name} can sign in now and use the app during the free trial.</p>
             <p className="text-[#5C4A68]">After that week, the monthly reference is <strong>{payment.reference}</strong>.</p>
             {devMatch && <button type="button" onClick={match} className="underline text-[#5C2A6E]">Simulate transfer match</button>}
           </div>

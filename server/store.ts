@@ -5,6 +5,20 @@ import { GYM_EVENTS } from '../src/data/gymData.ts';
 import { INITIAL_REGISTERED_CLUBS } from '../src/data/gymManagementData.ts';
 import { operatorEmails } from './operators.ts';
 import {
+  ADMIN_PERMISSIONS,
+  DEFAULT_SETTINGS,
+  GYMFEST_EVENT,
+  createAdmin,
+  type AdminLogEntry,
+  type AdminPermission,
+  type AdminRecord,
+  type Announcement,
+  type PlatformEvent,
+  type PlatformSettings,
+  type PostReport,
+} from './admin.ts';
+import { emptySkillEdits, type SkillEdits } from '../src/lib/skillEdits.ts';
+import {
   MAX_COMMENT,
   createWorkflow,
   clubIsApproved,
@@ -42,7 +56,7 @@ export const INSPO_CATEGORIES = [
 
 export type InspoCategory = (typeof INSPO_CATEGORIES)[number];
 export type Visibility = 'everyone' | 'followers' | 'club';
-export type Role = 'CLUB_ADMIN' | 'COACH' | 'GYMNAST' | 'PARENT';
+export type Role = 'CLUB_ADMIN' | 'COACH' | 'GYMNAST' | 'PARENT' | 'ADMIN';
 
 export interface UserRecord {
   id: string;
@@ -67,6 +81,11 @@ export interface UserRecord {
   levelUpdatedAt?: string | null;
   /** A coach the club administrator removed: cannot sign in. */
   disabled?: boolean;
+  /** Stopped by an administrator. Unlike a removed coach, they are told why they cannot sign in. */
+  suspended?: boolean;
+  suspendedReason?: string | null;
+  createdAt?: string | null;
+  lastLoginAt?: string | null;
   /** When this person ticked the privacy policy at sign-up. */
   privacyAcceptedAt?: string | null;
 }
@@ -86,6 +105,7 @@ export interface ClubRecord {
   coachName?: string | null;
   /** GymTrack checks each new club before gymnasts can choose it. No value: from before this check, so approved. */
   approvalStatus?: 'pending' | 'approved' | 'rejected';
+  requestedAt?: string | null;
   reviewedBy?: string | null;
   reviewedAt?: string | null;
   rejectionReason?: string | null;
@@ -132,7 +152,7 @@ export interface CommentRecord {
 export interface NotificationRecord {
   id: string;
   userId: string;
-  kind: 'like' | 'comment' | 'follow' | 'reply' | 'upload';
+  kind: 'like' | 'comment' | 'follow' | 'reply' | 'upload' | 'moderation';
   fromUserId: string;
   postId: string | null;
   read: boolean;
@@ -166,6 +186,14 @@ export interface DatabaseShape {
   /** Club subscriptions switched on by an operator after checking the bank transfer. Never edited or removed. */
   clubSubscriptions: ClubSubscriptionRecord[];
   passwordResets: { hash: string; userId: string; expiresAt: string; createdBy: string }[];
+  /** Administrators added by an owner. Owners themselves come from GYMTRACK_OPERATOR_EMAILS. */
+  admins: AdminRecord[];
+  adminLog: AdminLogEntry[];
+  announcements: Announcement[];
+  postReports: PostReport[];
+  platformEvents: PlatformEvent[];
+  skillEdits: SkillEdits;
+  settings: PlatformSettings;
 }
 
 export interface ClubSubscriptionRecord {
@@ -214,6 +242,13 @@ export function emptyDb(): DatabaseShape {
     uploadSessions: [],
     clubSubscriptions: [],
     passwordResets: [],
+    admins: [],
+    adminLog: [],
+    announcements: [],
+    postReports: [],
+    platformEvents: [],
+    skillEdits: emptySkillEdits(),
+    settings: { ...DEFAULT_SETTINGS },
   };
 }
 
@@ -335,7 +370,15 @@ export function openStore(filePath: string, now: () => Date = () => new Date(), 
 export function createBoundStore(db: DatabaseShape, persist: (snapshot: DatabaseShape) => Promise<void>, now: () => Date = () => new Date(), notifiers: Notifiers = {}, options: StoreOptions = {}) {
   const empty = emptyDb();
   for (const key of Object.keys(empty) as (keyof DatabaseShape)[]) {
-    if (!Array.isArray(db[key])) (db as unknown as Record<string, unknown>)[key] = empty[key];
+    const wanted = Array.isArray(empty[key]) ? Array.isArray(db[key]) : Boolean(db[key]) && typeof db[key] === 'object';
+    if (!wanted) (db as unknown as Record<string, unknown>)[key] = empty[key];
+  }
+  db.settings = { ...DEFAULT_SETTINGS, ...db.settings };
+  db.skillEdits = { ...emptySkillEdits(), ...db.skillEdits };
+  // The one event that was written into the Events page becomes an ordinary event, once.
+  if (!db.settings.eventsSeeded) {
+    db.platformEvents.push({ ...GYMFEST_EVENT, createdAt: now().toISOString(), updatedAt: now().toISOString() });
+    db.settings.eventsSeeded = true;
   }
   async function save() {
     await persist(db);
@@ -366,6 +409,8 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
       access: accessLabel(user),
       club: clubBilling(user),
       operator: isOperator(user),
+      adminOwner: isOwner(user),
+      adminPermissions: adminPermissions(user),
       age: user.showAge ? age : null,
       showLevel: user.showLevel,
       under18: age !== null && age < 18,
@@ -429,7 +474,7 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
 
   function paymentFor(user: UserRecord) {
     // Gymnasts never pay. Clubs pay by bank transfer, checked by an operator (see clubBilling).
-    if (user.role === 'GYMNAST' || clubFor(user)) return null;
+    if (user.role === 'GYMNAST' || user.role === 'ADMIN' || clubFor(user)) return null;
     const payment = db.payments.find((item) => item.status === 'pending' && item.studentIds.includes(user.id));
     return payment ? paymentView(payment) : null;
   }
@@ -463,7 +508,7 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
       trialEndsAt: club.trialEndsAt ?? null,
       paidUntil,
       subscriptionActive: Boolean(paidUntil && new Date(paidUntil).getTime() > now().getTime()),
-      monthlyFeeNgn: MONTHLY_FEE_NGN,
+      monthlyFeeNgn: db.settings.monthlyFeeNgn,
     };
   }
 
@@ -477,9 +522,23 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
     return new Date(Math.max(...times)).toISOString();
   }
 
-  /** Operators check club bank transfers and switch subscriptions on (GYMTRACK_OPERATOR_EMAILS). */
-  function isOperator(user: UserRecord) {
+  /** Owners are named in GYMTRACK_OPERATOR_EMAILS and can do everything in the Admin area. */
+  /** Keeps the club and password actions in the same activity log as everything else in Admin. */
+  function logOperator(actor: UserRecord, action: string, target: string) {
+    db.adminLog.unshift({ id: id('log'), at: now().toISOString(), by: actor.email, action, target: target.slice(0, 200) });
+  }
+
+  function isOwner(user: UserRecord) {
     return operatorEmails().includes(user.email.toLowerCase());
+  }
+
+  function isOperator(user: UserRecord) {
+    return isOwner(user) || db.admins.some((item) => item.userId === user.id);
+  }
+
+  function adminPermissions(user: UserRecord): readonly AdminPermission[] {
+    if (isOwner(user)) return ADMIN_PERMISSIONS;
+    return db.admins.find((item) => item.userId === user.id)?.permissions ?? [];
   }
 
   /** A club account whose club GymTrack has not approved. It sees no gymnasts' data. */
@@ -492,14 +551,14 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
    * Club accounts are open during the club's trial and while a subscription is active.
    */
   function accessOpen(user: UserRecord) {
-    if (user.role === 'GYMNAST') return true;
+    if (user.role === 'GYMNAST' || user.role === 'ADMIN') return true;
     if (clubWaiting(user)) return false;
     const until = accessUntil(user);
     return Boolean(until && new Date(until).getTime() > now().getTime());
   }
 
   function accessLabel(user: UserRecord) {
-    if (user.role === 'GYMNAST') return 'free';
+    if (user.role === 'GYMNAST' || user.role === 'ADMIN') return 'free';
     if (clubWaiting(user)) return clubFor(user)?.approvalStatus === 'rejected' ? 'rejected' : 'pending';
     if (!accessOpen(user)) return 'locked';
     const billing = clubBilling(user);
@@ -507,9 +566,11 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
     return 'trial';
   }
 
+  const trialMs = () => db.settings.trialDays * DAY_MS;
+
   function startTrial(user: UserRecord) {
     user.status = 'trial';
-    user.periodEnd = new Date(now().getTime() + TRIAL_MS).toISOString();
+    user.periodEnd = new Date(now().getTime() + trialMs()).toISOString();
   }
 
   async function ensureClubTrial(user: UserRecord) {
@@ -518,7 +579,7 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
     let changed = false;
     if (!club.trialEndsAt) {
       const personalOpen = user.role === 'CLUB_ADMIN' && user.periodEnd && new Date(user.periodEnd).getTime() > now().getTime();
-      club.trialEndsAt = personalOpen ? user.periodEnd : new Date(now().getTime() + TRIAL_MS).toISOString();
+      club.trialEndsAt = personalOpen ? user.periodEnd : new Date(now().getTime() + trialMs()).toISOString();
       changed = true;
     }
     if (!club.trialStartedAt) {
@@ -541,7 +602,7 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
 
   async function ensureTrial(user: UserRecord) {
     // Gymnasts are free: no trial, no payment.
-    if (user.role === 'GYMNAST') return;
+    if (user.role === 'GYMNAST' || user.role === 'ADMIN') return;
     // The free week starts when GymTrack approves the club.
     if (clubWaiting(user)) return;
     await ensureClubTrial(user);
@@ -552,7 +613,7 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
     if (!waiting) {
       db.payments.push({
         reference: `GT-${randomBytes(3).toString('hex').toUpperCase()}`,
-        amount: MONTHLY_FEE_NGN,
+        amount: db.settings.monthlyFeeNgn,
         studentIds: [user.id],
         status: 'pending',
         transferId: null,
@@ -604,6 +665,7 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
         periodEnd: null,
         selectedClubId: !clubId && student.selectedClubId && clubIsApproved(db.clubs.find((item) => item.id === student.selectedClubId)) ? student.selectedClubId : null,
         privacyAcceptedAt: student.acceptedPrivacy === true ? now().toISOString() : null,
+        createdAt: now().toISOString(),
       };
       // Gymnasts use GymTrack free: no trial to run out and no payment to open.
       db.users.push(user);
@@ -677,7 +739,7 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
     };
   }
 
-  return {
+  const core = {
     ...workflow,
 
     /** A private Connect video can be opened by anyone the post is shown to, such as the chosen club. */
@@ -686,6 +748,8 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
       if (clubWaiting(user)) return upload.ownerId === user.id;
       const url = `/api/uploads/${upload.id}`;
       const posts = db.posts.filter((post) => post.videoUrl === url);
+      // Administrators who review content can open any Connect video, whoever it was shared with.
+      if (posts.length > 0 && adminPermissions(user).includes('moderation')) return true;
       // Blocking someone also stops the video file opening for them.
       if (posts.some((post) => post.authorId !== user.id && isBlocked(user.id, post.authorId))) return false;
       if (workflow.canReadUpload(user, upload)) return true;
@@ -693,6 +757,7 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
     },
 
     async registerClub(input: { clubName: string; city: string; adminName: string; email: string; password: string; phone?: string; acceptedPrivacy?: boolean }) {
+      if (!db.settings.clubSignupsOpen) throw new Error('SIGNUPS_CLOSED');
       const email = requireEmail(input.email);
       if (db.users.some((item) => item.email === email)) throw new Error('EMAIL_TAKEN');
       const password = requirePassword(input.password);
@@ -710,6 +775,7 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
         trialEndsAt: null,
         trialStartedAt: needsApproval ? null : now().toISOString(),
         approvalStatus: needsApproval ? 'pending' : 'approved',
+        requestedAt: now().toISOString(),
       };
       const admin: UserRecord = {
         id: id('usr'),
@@ -728,6 +794,7 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
         showLevel: false,
         periodEnd: null,
         privacyAcceptedAt: input.acceptedPrivacy === true ? now().toISOString() : null,
+        createdAt: now().toISOString(),
       };
       if (!needsApproval) {
         startTrial(admin);
@@ -736,7 +803,7 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
       club.adminUserId = admin.id;
       const payment: PaymentRecord = {
         reference: `GT-${randomBytes(3).toString('hex').toUpperCase()}`,
-        amount: MONTHLY_FEE_NGN,
+        amount: db.settings.monthlyFeeNgn,
         studentIds: [admin.id],
         status: 'pending',
         transferId: null,
@@ -756,6 +823,7 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
     },
 
     async signupStudent(input: { name: string; email: string; password: string; phone?: string; level?: number; dateOfBirth?: string; selectedClubId?: string | null; acceptedPrivacy?: boolean }) {
+      if (!db.settings.gymnastSignupsOpen) throw new Error('SIGNUPS_CLOSED');
       const created = await createPendingStudents([input], null);
       const record = db.users.find((item) => item.id === created.students[0]?.id);
       if (!record) throw new Error('ERROR');
@@ -796,7 +864,10 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
     async login(email: string, password: string) {
       const address = typeof email === 'string' ? email.trim().toLowerCase() : '';
       const user = db.users.find((item) => item.email === address);
-      if (!user || user.disabled || typeof password !== 'string' || !verifyPassword(password, user.passwordHash)) throw new Error('INVALID');
+      if (!user || typeof password !== 'string' || !verifyPassword(password, user.passwordHash)) throw new Error('INVALID');
+      if (user.suspended) throw new Error('SUSPENDED');
+      if (user.disabled) throw new Error('INVALID');
+      user.lastLoginAt = now().toISOString();
       await ensureTrial(user);
       const token = await issueToken(user.id);
       return {
@@ -823,6 +894,10 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
       const address = typeof email === 'string' ? email.trim().toLowerCase() : '';
       const user = db.users.find((item) => item.email === address && !item.disabled);
       if (!user) throw new Error('NOT_FOUND');
+      // Nobody can use this page to take over an administrator's account.
+      if (isOperator(user) && !isOwner(operator) && user.id !== operator.id) throw new Error('FORBIDDEN');
+      if (isOwner(user) && user.id !== operator.id) throw new Error('FORBIDDEN');
+      logOperator(operator, 'Made a password reset link', user.email);
       const token = await newResetToken(user, OPERATOR_RESET_LINK_MS, operator.email);
       console.log(`Password reset link made for ${user.id} by ${operator.email}`);
       return { token, name: user.name, email: user.email, phone: user.phone, expiresInHours: OPERATOR_RESET_LINK_MS / (60 * 60 * 1000) };
@@ -881,6 +956,7 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
         showAge: false,
         showLevel: false,
         periodEnd: null,
+        createdAt: now().toISOString(),
       };
       Object.assign(coach, { name, phone, passwordHash: hashPassword(password), disabled: false });
       if (!existing) db.users.push(coach);
@@ -901,7 +977,7 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
     },
 
     // ---- Club approval ----
-    /** Opens the club to gymnasts. Its seven free days start now, the first time it is approved. */
+    /** Opens the club to gymnasts. Its free days start now, the first time it is approved. */
     async approveClub(operator: UserRecord, clubId: string) {
       if (!isOperator(operator)) throw new Error('FORBIDDEN');
       const club = db.clubs.find((item) => item.id === clubId);
@@ -913,13 +989,14 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
       club.rejectionReason = null;
       if (!club.trialEndsAt) {
         club.trialStartedAt = now().toISOString();
-        club.trialEndsAt = new Date(now().getTime() + TRIAL_MS).toISOString();
+        club.trialEndsAt = new Date(now().getTime() + trialMs()).toISOString();
         const admin = db.users.find((item) => item.id === club.adminUserId);
         if (admin) {
           admin.status = 'trial';
           admin.periodEnd = club.trialEndsAt;
         }
       }
+      logOperator(operator, 'Approved club', club.name);
       await save();
       return { id: club.id, approval: club.approvalStatus, trialEndsAt: club.trialEndsAt };
     },
@@ -935,6 +1012,7 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
       club.reviewedBy = operator.email;
       club.reviewedAt = now().toISOString();
       club.rejectionReason = text;
+      logOperator(operator, `Did not approve club: ${text}`, club.name);
       await save();
       return { id: club.id, approval: club.approvalStatus };
     },
@@ -962,6 +1040,9 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
       // Their files: what the staff uploaded, and everything the club's records point at.
       const removedPosts = new Set(db.posts.filter((post) => staffIds.has(post.authorId)).map((post) => post.id));
       db.posts = db.posts.filter((post) => !removedPosts.has(post.id));
+      db.postReports = db.postReports.filter((item) => !removedPosts.has(item.postId) && !staffIds.has(item.reporterId));
+      db.admins = db.admins.filter((item) => !staffIds.has(item.userId));
+      db.announcements = db.announcements.filter((item) => !item.clubId || !ids.has(item.clubId));
       db.likes = db.likes.filter((item) => !removedPosts.has(item.postId) && !staffIds.has(item.userId));
       db.saves = db.saves.filter((item) => !removedPosts.has(item.postId) && !staffIds.has(item.userId));
       const removedComments = new Set(db.comments.filter((item) => removedPosts.has(item.postId) || staffIds.has(item.authorId)).map((item) => item.id));
@@ -1018,13 +1099,15 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
      * Removes gymnast accounts and everything that is theirs. Nobody else's posts or records
      * change, and an id that is not a gymnast is ignored. Returns the stored files to delete.
      */
-    async removeGymnasts(userIds: string[]) {
-      const ids = new Set(db.users.filter((user) => user.role === 'GYMNAST' && userIds.includes(user.id)).map((user) => user.id));
+    async removeGymnasts(userIds: string[], roles: Role[] = ['GYMNAST']) {
+      const ids = new Set(db.users.filter((user) => roles.includes(user.role) && userIds.includes(user.id)).map((user) => user.id));
       if (ids.size === 0) return { gymnasts: 0, posts: 0, files: [] as UploadRecord[] };
       const removedPosts = new Set(db.posts.filter((post) => ids.has(post.authorId)).map((post) => post.id));
       const removedVideos = new Set(db.posts.filter((post) => removedPosts.has(post.id)).map((post) => post.videoUrl));
       for (const item of db.submissions) if (ids.has(item.gymnastId)) removedVideos.add(item.videoUrl);
       db.posts = db.posts.filter((post) => !removedPosts.has(post.id));
+      db.postReports = db.postReports.filter((item) => !removedPosts.has(item.postId) && !ids.has(item.reporterId));
+      db.admins = db.admins.filter((item) => !ids.has(item.userId));
       db.likes = db.likes.filter((item) => !removedPosts.has(item.postId) && !ids.has(item.userId));
       db.saves = db.saves.filter((item) => !removedPosts.has(item.postId) && !ids.has(item.userId));
       const removedComments = new Set(db.comments.filter((item) => removedPosts.has(item.postId) || ids.has(item.authorId)).map((item) => item.id));
@@ -1048,6 +1131,10 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
       const inUse = new Set<string>();
       for (const post of db.posts) inUse.add(post.videoUrl);
       for (const item of db.submissions) inUse.add(item.videoUrl);
+      // A coach's uploads may be the club's documents or certificates, which stay.
+      for (const item of db.documents) inUse.add(`/api/uploads/${item.uploadId}`);
+      for (const item of db.certificates) inUse.add(`/api/uploads/${item.uploadId}`);
+      for (const item of db.drills) if (item.attachmentUploadId) inUse.add(`/api/uploads/${item.attachmentUploadId}`);
       const files = db.uploads.filter((upload) => {
         const url = `/api/uploads/${upload.id}`;
         return (ids.has(upload.ownerId) || removedVideos.has(url)) && !inUse.has(url);
@@ -1139,6 +1226,7 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
       },
     ) {
       if (!accessOpen(author)) throw new Error('PAYMENT_REQUIRED');
+      if (!db.settings.connectUploadsOpen) throw new Error('CONNECT_CLOSED');
       const category = String(input.category);
       if (!INSPO_CATEGORIES.includes(category as InspoCategory) || category === 'All') throw new Error('CATEGORY');
       if (!input.videoUrl || typeof input.videoUrl !== 'string') throw new Error('VIDEO_REQUIRED');
@@ -1256,13 +1344,14 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
         startsAt: new Date(start).toISOString(),
         endsAt: new Date(start + months * MONTH_MS).toISOString(),
         months,
-        amountNgn: MONTHLY_FEE_NGN * months,
+        amountNgn: db.settings.monthlyFeeNgn * months,
         reference: reference.slice(0, 200),
         note: String(input.note ?? '').trim().slice(0, 1000),
         activatedBy: operator.email,
         activatedAt: now().toISOString(),
       };
       db.clubSubscriptions.push(record);
+      logOperator(operator, `Recorded payment: ${months} month${months === 1 ? '' : 's'}, ₦${record.amountNgn.toLocaleString()}, ${record.reference}`, club.name);
       await save();
       return record;
     },
@@ -1296,6 +1385,7 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
       db.comments = db.comments.filter((item) => item.postId !== postId);
       db.commentReports = db.commentReports.filter((item) => !commentIds.has(item.commentId));
       db.notifications = db.notifications.filter((item) => item.postId !== postId);
+      db.postReports = db.postReports.filter((item) => item.postId !== postId);
       const stillUsed = db.posts.some((item) => item.videoUrl === post.videoUrl) || db.submissions.some((item) => item.videoUrl === post.videoUrl);
       const upload = stillUsed ? null : db.uploads.find((item) => `/api/uploads/${item.id}` === post.videoUrl) ?? null;
       if (upload) db.uploads = db.uploads.filter((item) => item.id !== upload.id);
@@ -1373,6 +1463,22 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     },
 
+    /** Anyone who can see a video can report it. It stays up until an administrator decides. */
+    async reportPost(user: UserRecord, postId: string, reason: unknown) {
+      const post = db.posts.find((item) => item.id === postId);
+      if (!post || !canSeePost(user, post)) throw new Error('NOT_FOUND');
+      const first = !db.postReports.some((item) => item.postId === postId);
+      if (!db.postReports.some((item) => item.postId === postId && item.reporterId === user.id)) {
+        db.postReports.push({ id: id('rpt'), postId, reporterId: user.id, reason: typeof reason === 'string' ? reason.trim().slice(0, 500) : '', createdAt: now().toISOString() });
+        await save();
+      }
+      if (first && notifiers.enquiry) {
+        notifiers.enquiry({ name: 'GymTrack', phone: '', message: `A Connect video was reported (${post.skill}). Review it in Admin, Content moderation.` })
+          .catch((error) => console.error('Report notice could not be filed', error instanceof Error ? error.message : error));
+      }
+      return { ok: true };
+    },
+
     async reportComment(user: UserRecord, commentId: string) {
       const comment = db.comments.find((item) => item.id === commentId);
       const post = comment && db.posts.find((item) => item.id === comment.postId);
@@ -1397,6 +1503,22 @@ export function createBoundStore(db: DatabaseShape, persist: (snapshot: Database
       return { ok: true };
     },
   };
+
+  const admin = createAdmin(db, save, now, {
+    isOwner,
+    isAdmin: isOperator,
+    hashPassword,
+    requireEmail,
+    requirePassword,
+    requireText,
+    requireLevel,
+    notify,
+    removeAccounts: (ids, roles) => core.removeGymnasts(ids, roles),
+    removeClubs: (ids) => core.removeClubs(ids),
+    clubStatus: (clubId) => ({ paidUntil: clubPaidUntil(db.clubs.find((club) => club.id === clubId) ?? null) }),
+  });
+
+  return { ...core, ...admin, adminPermissions };
 }
 
 export type GymStore = ReturnType<typeof openStore>;

@@ -202,7 +202,7 @@ export const ClubOffice: React.FC<{ afterAttendance?: React.ReactNode }> = ({ af
               <p className="text-sm text-[#5C4A68]">{item.body}</p>
               <p className="text-xs text-[#5C4A68]">{new Date(item.createdAt).toLocaleString()} · {item.authorName}</p>
             </div>
-            {canDeleteNotices && (
+            {canDeleteNotices && !item.platform && (
               confirmDelete === item.id ? (
                 <span className="flex flex-col sm:flex-row gap-2 shrink-0 text-sm">
                   <button

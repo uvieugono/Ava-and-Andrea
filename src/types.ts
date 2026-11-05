@@ -49,6 +49,8 @@ export interface Skill {
   gymfestTier?: 'SILVER' | 'GOLD' | 'PLATINUM';
   /** Listed for the level but not needed to move up. */
   optional?: boolean;
+  /** An administrator chose this demonstration, so it always shows. */
+  videoChosen?: boolean;
   /** The gymnast's latest video for this skill, when there is one. */
   submissionId?: string;
 }
@@ -190,7 +192,7 @@ export interface AchievementBadge {
   xpReward: number;
 }
 
-export type UserRole = 'GYMNAST' | 'COACH' | 'CLUB_ADMIN';
+export type UserRole = 'GYMNAST' | 'COACH' | 'CLUB_ADMIN' | 'ADMIN';
 
 export type NavigationTab = 
   | 'home' 

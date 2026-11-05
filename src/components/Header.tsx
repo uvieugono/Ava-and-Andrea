@@ -27,8 +27,13 @@ function isActive(current: NavigationTab, id: NavigationTab) {
 
 export const Header: React.FC = () => {
   const { user, currentTab, setCurrentTab, isStaff, isOperator, logoutUser } = useGym();
+  const adminOnly = user.role === 'ADMIN';
   // The Club Dashboard is only for signed-in club accounts. Clubs do not see the gymnast pages.
-  const items = NAV.filter((item) => (isStaff ? !GYMNAST_ONLY.includes(item.id) : item.id !== 'dashboard'));
+  const pages = NAV.filter((item) => {
+    if (adminOnly) return item.id === 'events' || item.id === 'clubs';
+    return isStaff ? !GYMNAST_ONLY.includes(item.id) : item.id !== 'dashboard';
+  });
+  const items: { id: NavigationTab; label: string }[] = isOperator ? [...pages, { id: 'operator', label: 'Admin' }] : pages;
   const [open, setOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const profileRef = useRef<HTMLDivElement>(null);
@@ -60,7 +65,7 @@ export const Header: React.FC = () => {
   const profileMenu: { id: NavigationTab; label: string; anchor?: string; edit?: boolean }[] = [
     { id: 'profile', label: 'My Profile' },
     { id: 'profile', label: 'Edit Profile', edit: true },
-    ...(isStaff
+    ...(adminOnly ? [] : isStaff
       ? [{ id: 'dashboard' as NavigationTab, label: 'Club Dashboard' }]
       : [
           { id: 'profile' as NavigationTab, label: 'My Videos', anchor: 'profile-videos' },
@@ -69,9 +74,9 @@ export const Header: React.FC = () => {
           { id: 'profile' as NavigationTab, label: 'Competition History', anchor: 'profile-competitions' },
           { id: 'progress' as NavigationTab, label: 'My Progress' },
         ]),
-    { id: 'profile', label: 'Club Noticeboard', anchor: 'profile-notices' },
+    ...(adminOnly ? [] : [{ id: 'profile' as NavigationTab, label: 'Club Noticeboard', anchor: 'profile-notices' }]),
     { id: 'clubs', label: 'Find a Club' },
-    ...(isOperator ? [{ id: 'operator' as NavigationTab, label: 'Club approvals and subscriptions' }] : []),
+    ...(isOperator ? [{ id: 'operator' as NavigationTab, label: 'Admin' }] : []),
   ];
 
   const openItem = (item: (typeof profileMenu)[number]) => {
@@ -94,7 +99,7 @@ export const Header: React.FC = () => {
   return (
     <header className="fixed top-0 inset-x-0 z-40 bg-white/95 backdrop-blur border-b border-[#E4D7EE]">
       <div className="max-w-6xl mx-auto px-4 h-16 flex items-center gap-4">
-        <button type="button" onClick={() => go(isStaff ? 'dashboard' : 'home')} className="shrink-0" aria-label="GymTrack home">
+        <button type="button" onClick={() => go(adminOnly ? 'operator' : isStaff ? 'dashboard' : 'home')} className="shrink-0" aria-label="GymTrack home">
           <Logo />
         </button>
         <nav className="hidden lg:flex items-center gap-1 flex-1">
@@ -125,7 +130,7 @@ export const Header: React.FC = () => {
             <ChevronDown className={`w-4 h-4 text-[#5C4A68] transition-transform ${profileOpen ? 'rotate-180' : ''}`} />
           </button>
           {profileOpen && (
-            <div role="menu" aria-label="Profile" className="absolute right-0 top-full mt-2 w-60 bg-white border border-[#E4D7EE] rounded-2xl shadow-lg p-2 z-50">
+            <div role="menu" aria-label="Profile" className="absolute right-0 top-full mt-2 w-60 max-h-[calc(100vh-5rem)] overflow-y-auto bg-white border border-[#E4D7EE] rounded-2xl shadow-lg p-2 z-50">
               {profileMenu.map((item) => (
                 <button
                   key={item.label}

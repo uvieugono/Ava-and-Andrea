@@ -9,7 +9,7 @@
     "start": "node build/server.cjs",
     "preview": "vite preview",
     "clean": "node -e \"for(const d of ['dist','build'])require('fs').rmSync(d,{recursive:true,force:true})\"",
-    "test": "node --import tsx --test tests/signup.test.ts tests/requirements.test.ts tests/workflow.test.ts tests/driveAuth.test.ts tests/brief20oct.test.ts tests/completeDev.test.ts tests/prelaunch.test.ts tests/launchFeatures.test.ts",
+    "test": "node --import tsx --test tests/signup.test.ts tests/requirements.test.ts tests/workflow.test.ts tests/driveAuth.test.ts tests/brief20oct.test.ts tests/completeDev.test.ts tests/prelaunch.test.ts tests/launchFeatures.test.ts tests/admin.test.ts",
     "drive:auth": "tsx scripts/drive-auth.ts",
     "lint": "tsc --noEmit"
   },

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Ban, Bookmark, Copy, MessageCircle, Share2, ThumbsUp, Trash2, Upload, UserPlus, X } from 'lucide-react';
+import { Ban, Bookmark, Copy, Flag, MessageCircle, Share2, ThumbsUp, Trash2, Upload, UserPlus, X } from 'lucide-react';
 import { gymApi, InspoPost, MAX_VIDEO_MB, UploadError, mediaUrl, uploadFile } from '../services/gymApi';
 import { useGym } from '../context/GymContext';
 
@@ -22,6 +22,7 @@ const EMPTY = {
 
 const PUBLISH_ERRORS: Record<string, string> = {
   PAYMENT_REQUIRED: 'Your free week has ended. Payment is needed before you can publish.',
+  CONNECT_CLOSED: 'New videos are paused for now. Please try again later.',
   VIDEO_REQUIRED: 'Choose a video first.',
   VIDEO_INVALID: 'That video could not be used. Choose it again.',
   SKILL_REQUIRED: 'Say which skill the video shows.',
@@ -46,6 +47,9 @@ export const InspoScreen: React.FC = () => {
   const [showNotes, setShowNotes] = useState(false);
   const [replyTo, setReplyTo] = useState<string | null>(null);
   const [draft, setDraft] = useState(EMPTY);
+  const [reportingId, setReportingId] = useState<string | null>(null);
+  const [reportReason, setReportReason] = useState('');
+  const [defaultAudience, setDefaultAudience] = useState<'all' | 'club'>('all');
   const [file, setFile] = useState<File | null>(null);
   const [publishing, setPublishing] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
@@ -71,6 +75,7 @@ export const InspoScreen: React.FC = () => {
 
   useEffect(() => {
     gymApi.registeredClubs().then((result) => setClubs(result.clubs)).catch(() => setClubs([]));
+    gymApi.publicSettings().then((result) => setDefaultAudience(result.defaultVideoAudience)).catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -220,7 +225,12 @@ export const InspoScreen: React.FC = () => {
           </button>
           <button
             type="button"
-            onClick={() => { setOpen(true); setPreviewing(false); setFormError(null); setDraft((prev) => ({ ...prev, clubTag: prev.clubTag || user.clubName })); }}
+            onClick={() => { setOpen(true); setPreviewing(false); setFormError(null); setDraft((prev) => {
+              const club = user.selectedClubId || user.clubId || '';
+              // The audience set in Admin, for someone with a club to show it to.
+              const audience = prev.previewUrl ? prev.audience : defaultAudience === 'club' && club ? 'club' as const : 'all' as const;
+              return { ...prev, audience, audienceClubId: prev.audienceClubId || (audience === 'club' ? club : ''), clubTag: prev.clubTag || user.clubName };
+            }); }}
             className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-[#5C2A6E] text-white text-sm hover:bg-[#3E1B4A] shadow-sm"
           >
             <Upload className="w-4 h-4" />
@@ -239,6 +249,7 @@ export const InspoScreen: React.FC = () => {
               {item.kind === 'reply' && 'Someone replied to your comment.'}
               {item.kind === 'follow' && 'Someone followed you.'}
               {item.kind === 'upload' && 'Someone you follow uploaded a video.'}
+              {item.kind === 'moderation' && 'GymTrack removed one of your videos because it broke the rules.'}
             </button>
           ))}
         </div>
@@ -342,6 +353,10 @@ export const InspoScreen: React.FC = () => {
                     <Ban className="w-4 h-4" />
                     Block
                   </button>
+                  <button type="button" onClick={() => { setReportingId(reportingId === post.id ? null : post.id); setReportReason(''); }} className={`${ICON_BUTTON} ${OFF}`}>
+                    <Flag className="w-4 h-4" />
+                    Report
+                  </button>
                 </>
               )}
               {post.mine && (
@@ -358,6 +373,21 @@ export const InspoScreen: React.FC = () => {
                 )
               )}
             </div>
+
+            {reportingId === post.id && (
+              <form
+                className="flex flex-wrap gap-2 text-sm"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  gymApi.reportPost(post.id, reportReason.trim())
+                    .then(() => { setReportingId(null); say('Thank you. GymTrack will look at this video.'); })
+                    .catch(() => say('The report could not be sent. Try again.', false));
+                }}
+              >
+                <input required maxLength={500} value={reportReason} onChange={(e) => setReportReason(e.target.value)} placeholder="What is wrong with this video?" aria-label="What is wrong with this video?" className="flex-1 min-w-48 rounded-xl border border-[#E4D7EE] px-3 py-2" />
+                <button className="px-4 py-2 rounded-full bg-[#5C2A6E] text-white">Send report</button>
+              </form>
+            )}
 
             {sharing === post.id && (
               <div className="space-y-2 border-t border-[#F4EEF8] pt-3 text-sm">

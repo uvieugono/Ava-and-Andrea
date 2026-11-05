@@ -149,10 +149,12 @@ export const ProfileScreen: React.FC = () => {
           </div>
 
           {/* USAG Level Badge */}
-          <span className="absolute bottom-1 right-1 bg-gradient-to-r from-[#5C2A6E] to-[#3E1B4A] text-white text-xs font-black px-3 py-1 rounded-full shadow-md border-2 border-white flex items-center gap-1">
-            <Award className="w-3.5 h-3.5 fill-current" />
-            <span>Lvl {user.level}</span>
-          </span>
+          {isGymnast && (
+            <span className="absolute bottom-1 right-1 bg-gradient-to-r from-[#5C2A6E] to-[#3E1B4A] text-white text-xs font-black px-3 py-1 rounded-full shadow-md border-2 border-white flex items-center gap-1">
+              <Award className="w-3.5 h-3.5 fill-current" />
+              <span>Lvl {user.level}</span>
+            </span>
+          )}
 
           {/* Quick Edit Photo Trigger Button */}
           <button
@@ -174,11 +176,15 @@ export const ProfileScreen: React.FC = () => {
         </h1>
 
         <div className="flex items-center gap-1.5 text-xs text-[#5C2A6E] font-bold mt-1">
-          <MapPin className="w-3.5 h-3.5 shrink-0" />
-          <span>{user.clubName || 'No club selected'}</span>
-          <span className="text-[#5C4A68]">•</span>
+          {userRole !== 'ADMIN' && (
+            <>
+              <MapPin className="w-3.5 h-3.5 shrink-0" />
+              <span>{user.clubName || 'No club selected'}</span>
+              <span className="text-[#5C4A68]">•</span>
+            </>
+          )}
           <span className="bg-[#F4EEF8] text-[#3E1B4A] px-2 py-0.5 rounded-full border border-[#E4D7EE]">
-            {isGymnast ? `USAG Level ${user.level} Gymnast` : userRole === 'COACH' ? 'Coach' : 'Club administrator'}
+            {isGymnast ? `USAG Level ${user.level} Gymnast` : userRole === 'COACH' ? 'Coach' : userRole === 'ADMIN' ? 'GymTrack administrator' : 'Club administrator'}
           </span>
         </div>
 
@@ -217,14 +223,16 @@ export const ProfileScreen: React.FC = () => {
             )}
           </button>
 
-          <button
-            id="btn-profile-view-progress"
-            onClick={() => setCurrentTab('progress')}
-            className="w-full sm:flex-1 py-3 px-4 rounded-full bg-[#F4EEF8] border border-[#E4D7EE] text-[#3E1B4A] text-xs font-extrabold hover:bg-[#E4D7EE] transition-all flex items-center justify-center gap-2 shadow-xs active:scale-98"
-          >
-            <Award className="w-4 h-4 text-[#5C2A6E]" />
-            <span>View Progress Card</span>
-          </button>
+          {userRole !== 'ADMIN' && (
+            <button
+              id="btn-profile-view-progress"
+              onClick={() => setCurrentTab('progress')}
+              className="w-full sm:flex-1 py-3 px-4 rounded-full bg-[#F4EEF8] border border-[#E4D7EE] text-[#3E1B4A] text-xs font-extrabold hover:bg-[#E4D7EE] transition-all flex items-center justify-center gap-2 shadow-xs active:scale-98"
+            >
+              <Award className="w-4 h-4 text-[#5C2A6E]" />
+              <span>View Progress Card</span>
+            </button>
+          )}
         </div>
 
         {/* Quick Links: Club Dashboard & Registered Clubs */}
@@ -458,7 +466,7 @@ export const ProfileScreen: React.FC = () => {
       )}
 
       {/* MY VIDEOS: everything this user published on Connect */}
-      {!isEditing && (
+      {!isEditing && userRole !== 'ADMIN' && (
         <div id="profile-videos" className="w-full p-4 rounded-3xl bg-white border border-[#E4D7EE] shadow-xs text-left space-y-3 scroll-mt-20">
           <div className="flex items-center justify-between gap-3">
             <h2 className="font-display text-xl text-[#3E1B4A]">My Videos</h2>
@@ -592,7 +600,7 @@ export const ProfileScreen: React.FC = () => {
           <div className="flex items-center justify-between text-xs">
             <span className="font-bold text-[#3E1B4A]">Account type:</span>
             <span className="px-2.5 py-0.5 rounded-full bg-[#F4EEF8] border border-[#E4D7EE] text-[#3E1B4A] font-extrabold text-[10px]">
-              {userRole === 'GYMNAST' ? 'Student / Gymnast' : userRole === 'COACH' ? 'Coach' : 'Club administrator'}
+              {userRole === 'GYMNAST' ? 'Student / Gymnast' : userRole === 'COACH' ? 'Coach' : userRole === 'ADMIN' ? 'GymTrack administrator' : 'Club administrator'}
             </span>
           </div>
         </div>

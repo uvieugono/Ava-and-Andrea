@@ -15,7 +15,7 @@ const formatDate = (value: string | null) =>
   value ? new Date(value).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' }) : 'not recorded';
 
 /**
- * Shown to a club account once the club's seven-day trial has ended and no subscription is
+ * Shown to a club account once the club's free trial has ended and no subscription is
  * active. Paying does not switch the club back on by itself: GymTrack checks the transfer
  * evidence and then activates the subscription.
  */
@@ -53,7 +53,7 @@ export const PaymentRequired: React.FC<{ onUnlock: () => void; onLogout: () => v
       <div className="w-full max-w-md mx-auto bg-white rounded-3xl p-6 border border-[#E4D7EE] space-y-4">
         <h1 className="font-display text-2xl text-[#3E1B4A]">Your club's free trial has ended</h1>
         <p className="text-sm text-[#5C4A68]">
-          {clubName}'s seven-day free trial ran from {formatDate(club?.trialStartedAt ?? null)} to {formatDate(club?.trialEndsAt ?? null)}.
+          {clubName}'s free trial ran from {formatDate(club?.trialStartedAt ?? null)} to {formatDate(club?.trialEndsAt ?? null)}.
           Payment is needed to restore the club's access to GymTrack.
         </p>
         <p className="text-sm text-[#241628]">

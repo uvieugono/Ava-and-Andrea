@@ -21,6 +21,7 @@ import {
   SkillStatus,
 } from '../types';
 import { INITIAL_SKILLS, WORKOUTS, GYM_EVENTS, PRODUCTS, BADGES, COMMUNITY_POSTS } from '../data/gymData';
+import { applySkillEdits } from '../lib/skillEdits';
 import { INITIAL_REGISTERED_CLUBS } from '../data/gymManagementData';
 import {
   ApiUser,
@@ -77,7 +78,7 @@ interface GymContextType {
   dismissCelebration: () => void;
 
   // Account
-  loginFromServer: (user: ApiUser) => void;
+  loginFromServer: (user: ApiUser, startTab?: NavigationTab) => void;
   logoutUser: () => void;
   refreshAccount: () => Promise<void>;
   updateUserProfile: (updates: Partial<UserProfile>) => void;
@@ -117,6 +118,8 @@ interface GymContextType {
   withdrawSkillVideo: (submissionId: string) => Promise<ActionResult>;
   removeApproval: (submissionId: string) => Promise<ActionResult>;
   isOperator: boolean;
+  adminOwner: boolean;
+  adminPermissions: string[];
   updateSkillTutorial: (skillId: string, tutorial: YouTubeTutorial) => void;
 
   // Workouts
@@ -180,7 +183,7 @@ function avatarKey(id: string) {
 }
 
 function toProfile(api: ApiUser): UserProfile {
-  const role: UserRole = api.role === 'CLUB_ADMIN' || api.role === 'COACH' ? api.role : 'GYMNAST';
+  const role: UserRole = api.role === 'CLUB_ADMIN' || api.role === 'COACH' || api.role === 'ADMIN' ? api.role : 'GYMNAST';
   const stored = typeof window !== 'undefined' ? localStorage.getItem(avatarKey(api.id)) : null;
   return {
     id: api.id,
@@ -270,6 +273,8 @@ export const GymProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const levelRef = useRef<number | null>(null);
 
   const [isOperator, setIsOperator] = useState(false);
+  const [adminOwner, setAdminOwner] = useState(false);
+  const [adminPermissions, setAdminPermissions] = useState<string[]>([]);
   const isStaff = user.isLoggedIn && (user.role === 'CLUB_ADMIN' || user.role === 'COACH') && Boolean(user.clubId);
   const userRole: UserRole = user.role ?? 'GYMNAST';
 
@@ -335,6 +340,10 @@ export const GymProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     applyServerUser(next);
     setIsOperator(Boolean(next.operator));
+    setAdminOwner(Boolean(next.adminOwner));
+    setAdminPermissions(next.adminPermissions ?? []);
+    // Skills added or changed in Admin. If this cannot be read the built-in list still works.
+    gymApi.skillCatalogue().then((result) => setSkillBase(applySkillEdits(INITIAL_SKILLS, result.edits))).catch(() => undefined);
     // Keep the access state current, e.g. a gymnast who chooses a club stops needing to pay.
     const access = readAccess();
     setAccess(next.access ?? next.status, me.payment, access.devMatch, next.periodEnd ?? null);
@@ -350,7 +359,7 @@ export const GymProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, []);
 
-  const loginFromServer = useCallback((api: ApiUser) => {
+  const loginFromServer = useCallback((api: ApiUser, startTab?: NavigationTab) => {
     levelRef.current = api.level ?? null;
     setSkillStates({});
     setProgress(api.progress ?? null);
@@ -360,10 +369,12 @@ export const GymProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setMyCertificates([]);
     setMyDrills([]);
     setIsOperator(Boolean(api.operator));
+    setAdminOwner(Boolean(api.adminOwner));
+    setAdminPermissions(api.adminPermissions ?? []);
     setUser({ ...toProfile(api), xp: 0 });
     // A shared video link (?video=…) opens Connect on that video.
     const sharedVideo = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('video');
-    setTab(sharedVideo ? 'community' : api.role === 'CLUB_ADMIN' || api.role === 'COACH' ? 'dashboard' : 'home');
+    setTab(startTab ?? (sharedVideo ? 'community' : api.role === 'ADMIN' ? 'operator' : api.role === 'CLUB_ADMIN' || api.role === 'COACH' ? 'dashboard' : 'home'));
     setReady(true);
   }, []);
 
@@ -381,6 +392,8 @@ export const GymProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setMyCertificates([]);
     setMyDrills([]);
     setIsOperator(false);
+    setAdminOwner(false);
+    setAdminPermissions([]);
     setTab('home');
   }, []);
 
@@ -962,6 +975,8 @@ export const GymProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         withdrawSkillVideo,
         removeApproval,
         isOperator,
+        adminOwner,
+        adminPermissions,
         updateSkillTutorial,
         completeWorkout,
         toggleEventCalendar,
