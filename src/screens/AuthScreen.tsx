@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useGym } from '../context/GymContext';
-import { ApiUser, gymApi, setAccess, setMediaToken, setToken } from '../services/gymApi';
+import { ApiUser, gymApi, PublicSettings, setAccess, setMediaToken, setToken } from '../services/gymApi';
 import { USAGLevel } from '../types';
 import { Logo } from '../components/Logo';
 import { Sparkles } from 'lucide-react';
@@ -8,7 +8,7 @@ import { PasswordInput } from '../components/PasswordInput';
 import { PageSketch } from '../components/GymnastSketch';
 import { ForgotPassword, ResetPassword } from '../components/PasswordRecovery';
 
-type Who = 'student' | 'club';
+type Who = 'student' | 'club' | 'admin';
 type Action = 'register' | 'signin';
 
 const FIELD = 'w-full rounded-2xl border border-[#E4D7EE] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#5C2A6E]';
@@ -26,6 +26,7 @@ const REGISTER_ERRORS: Record<string, string> = {
   LEVEL_INVALID: 'Choose a level from 1 to 10.',
   MISSING: 'Fill in every field.',
   TOO_MANY: 'Too many new accounts from this connection. Please try again in an hour.',
+  SIGNUPS_CLOSED: 'New registrations are closed for now. Please try again later.',
 };
 
 function registerError(error: unknown) {
@@ -37,7 +38,8 @@ function registerError(error: unknown) {
 }
 
 function signInError(error: unknown) {
-  const { status } = error as { status?: number };
+  const { status, body } = error as { status?: number; body?: { code?: string } };
+  if (body?.code === 'SUSPENDED') return 'This account has been suspended. Ask your club or GymTrack for help.';
   if (status === 401) return 'Email or password is wrong.';
   if (status === 429) return 'Too many wrong passwords. Please wait 15 minutes and try again.';
   return 'Could not reach GymTrack. Check your connection and try again.';
@@ -63,9 +65,11 @@ export const AuthScreen: React.FC = () => {
   const [forgot, setForgot] = useState(false);
   const [resetToken, setResetToken] = useState(() => new URLSearchParams(window.location.search).get('reset'));
   const [notice, setNotice] = useState<string | null>(null);
+  const [settings, setSettings] = useState<PublicSettings | null>(null);
 
   useEffect(() => {
     gymApi.registeredClubs().then((result) => setClubs(result.clubs)).catch(() => setClubs([]));
+    gymApi.publicSettings().then(setSettings).catch(() => setSettings(null));
   }, []);
 
   const choose = (nextWho: Who, nextAction: Action) => {
@@ -95,6 +99,14 @@ export const AuthScreen: React.FC = () => {
     try {
       const result = await gymApi.login(email, password);
       const isClubAccount = result.user.role === 'CLUB_ADMIN' || result.user.role === 'COACH';
+      if (who === 'admin' && !result.user.operator) {
+        setError('That account is not a GymTrack administrator.');
+        return;
+      }
+      if (who !== 'admin' && result.user.role === 'ADMIN') {
+        setError('That is an administrator account. Use Admin sign in.');
+        return;
+      }
       if (who === 'club' && !isClubAccount) {
         setError('That is a student account. Use Student sign in.');
         return;
@@ -106,7 +118,7 @@ export const AuthScreen: React.FC = () => {
       setToken(result.token);
       setMediaToken(result.mediaToken);
       setAccess(result.user.access ?? result.user.status, result.payment, false, result.user.periodEnd ?? null);
-      enter(result.user);
+      loginFromServer(result.user, who === 'admin' ? 'operator' : undefined);
     } catch (failure) {
       setError(signInError(failure));
     } finally {
@@ -151,7 +163,8 @@ export const AuthScreen: React.FC = () => {
   const heading =
     action === 'register'
       ? who === 'student' ? 'New student registration' : 'New club registration'
-      : who === 'student' ? 'Student sign in' : 'Club sign in';
+      : who === 'admin' ? 'Admin sign in' : who === 'student' ? 'Student sign in' : 'Club sign in';
+  const closed = action === 'register' && settings !== null && !(who === 'student' ? settings.gymnastSignupsOpen : settings.clubSignupsOpen);
   const subline =
     action === 'register'
       ? 'First time on GymTrack? Create your account.'
@@ -240,7 +253,7 @@ export const AuthScreen: React.FC = () => {
                 <p className="text-xs text-[#5C4A68]">GymTrack is free for gymnasts. Choose your club and it reviews your skills.</p>
               )}
               {action === 'register' && who === 'club' && (
-                <p className="text-xs text-[#5C4A68]">GymTrack checks each new club before gymnasts can choose it. Your 7 free days start when your club is approved. After that, the office is ₦1,000 a month.</p>
+                <p className="text-xs text-[#5C4A68]">GymTrack checks each new club before gymnasts can choose it. Your {settings?.trialDays ?? 7} free days start when your club is approved. After that, the office is ₦{(settings?.monthlyFeeNgn ?? 1000).toLocaleString()} a month.</p>
               )}
               {action === 'register' && (
                 <label className="flex items-start gap-2 text-xs text-[#241628]">
@@ -251,9 +264,10 @@ export const AuthScreen: React.FC = () => {
                   </span>
                 </label>
               )}
+              {closed && <p className="text-sm text-[#3E1B4A]" role="status">New {who === 'student' ? 'student' : 'club'} registrations are closed for now. Please try again later.</p>}
               {notice && <p className="text-sm text-emerald-800" role="status">{notice}</p>}
               {error && <p className="text-sm text-red-600">{error}</p>}
-              <button disabled={busy} className="w-full py-3 rounded-full bg-[#5C2A6E] text-white font-bold disabled:opacity-60">
+              <button disabled={busy || closed} className="w-full py-3 rounded-full bg-[#5C2A6E] text-white font-bold disabled:opacity-60">
                 {busy ? 'Please wait…' : action === 'signin' ? 'Sign in' : 'Create account'}
               </button>
               {action === 'signin' && (
@@ -262,7 +276,10 @@ export const AuthScreen: React.FC = () => {
             </form>
           </>
         )}
-        <p className="text-center text-xs"><a href="/privacy" target="_blank" rel="noopener noreferrer" className="text-[#5C2A6E] underline">Privacy Policy</a></p>
+        <p className="text-center text-xs space-x-3">
+          <a href="/privacy" target="_blank" rel="noopener noreferrer" className="text-[#5C2A6E] underline">Privacy Policy</a>
+          {!resetToken && !forgot && <button type="button" onClick={() => choose('admin', 'signin')} className="text-[#5C2A6E] underline">Admin sign in</button>}
+        </p>
       </div>
       <PageSketch page="auth" />
     </div>

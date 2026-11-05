@@ -68,7 +68,7 @@ export const ClubsScreen: React.FC = () => {
         </div>
         {askingToRegister && (
           <div className="bg-white border border-[#E4D7EE] rounded-2xl p-4 space-y-2 text-sm">
-            <p>A club has its own account. Log out, then choose <strong>Register a club</strong>. GymTrack checks each new club before gymnasts can choose it, and your seven free days start when it is approved.</p>
+            <p>A club has its own account. Log out, then choose <strong>Register a club</strong>. GymTrack checks each new club before gymnasts can choose it, and your free days start when it is approved.</p>
             <button type="button" onClick={logoutUser} className="px-4 py-2 rounded-full border border-[#5C2A6E] text-[#5C2A6E]">Log out and register a club</button>
           </div>
         )}

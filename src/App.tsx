@@ -18,14 +18,15 @@ import { readAccess } from './services/gymApi';
 import { ClubsScreen } from './screens/ClubsScreen';
 import { GymDashboardScreen } from './screens/GymDashboardScreen';
 import { PageSketch } from './components/GymnastSketch';
-import { OperatorScreen } from './screens/OperatorScreen';
+import { AdminScreen } from './screens/admin/AdminScreen';
 import { PrivacyScreen } from './screens/PrivacyScreen';
 import { ClubAwaitingApproval } from './components/ClubAwaitingApproval';
 
 const MainApp: React.FC = () => {
   const { user, ready, currentTab: selectedTab, userRole, isStaff, isOperator, logoutUser } = useGym();
-  // Club accounts never see the gymnast pages (Home, Skills, My Progress).
-  const currentTab = isStaff && (selectedTab === 'home' || selectedTab === 'skills' || selectedTab === 'progress') ? 'dashboard' : selectedTab;
+  // Club accounts never see the gymnast pages (Home, Skills, My Progress), nor do administrator accounts.
+  const gymnastPage = selectedTab === 'home' || selectedTab === 'skills' || selectedTab === 'progress';
+  const currentTab = isStaff && gymnastPage ? 'dashboard' : userRole === 'ADMIN' && (gymnastPage || selectedTab === 'dashboard') ? 'operator' : selectedTab;
   const [paidOpen, setPaidOpen] = useState(false);
 
   useEffect(() => {
@@ -73,7 +74,7 @@ const MainApp: React.FC = () => {
             {currentTab === 'dashboard' && isStaff && (
               <>
                 {userRole === 'CLUB_ADMIN' && access.status === 'trial' && clubTrialLabel && (
-                  <p className="max-w-3xl mx-auto px-4 mb-3 text-sm text-[#6b555c]">Your club can use every part of GymTrack until {clubTrialLabel}. Payment starts after this free week.</p>
+                  <p className="max-w-3xl mx-auto px-4 mb-3 text-sm text-[#6b555c]">Your club can use every part of GymTrack until {clubTrialLabel}. Payment starts after this free trial.</p>
                 )}
                     <GymDashboardScreen />
               </>
@@ -81,7 +82,7 @@ const MainApp: React.FC = () => {
             {currentTab === 'community' && <InspoScreen />}
             {currentTab === 'shop' && <ShopScreen />}
             {currentTab === 'profile' && <ProfileScreen />}
-            {currentTab === 'operator' && isOperator && <OperatorScreen />}
+            {currentTab === 'operator' && isOperator && <AdminScreen />}
           </>
         )}
         <PageSketch page={currentTab} />

@@ -1,3 +1,4 @@
+import type { SkillEdits } from '../lib/skillEdits';
 const TOKEN_KEY = 'gymtrack_api_token';
 
 export function getToken() {
@@ -191,6 +192,8 @@ export interface NoticeView {
   body: string;
   createdAt: string;
   authorName: string;
+  /** Sent by GymTrack, not by the club. */
+  platform?: boolean;
 }
 
 export interface ClubGymnastView {
@@ -234,7 +237,7 @@ export interface ApiUser {
   offersBeam?: boolean;
   progress?: Progress | null;
   username: string;
-  role: 'CLUB_ADMIN' | 'COACH' | 'GYMNAST' | 'PARENT';
+  role: 'CLUB_ADMIN' | 'COACH' | 'GYMNAST' | 'PARENT' | 'ADMIN';
   level: number | null;
   clubId: string | null;
   clubName: string | null;
@@ -245,10 +248,40 @@ export interface ApiUser {
   club?: ClubBilling | null;
   /** May check club bank transfers and switch subscriptions on. */
   operator?: boolean;
+  /** Owners can do everything, and only they can manage other administrators. */
+  adminOwner?: boolean;
+  adminPermissions?: string[];
   periodEnd?: string | null;
 }
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+export interface PublicSettings {
+  clubSignupsOpen: boolean;
+  gymnastSignupsOpen: boolean;
+  connectUploadsOpen: boolean;
+  monthlyFeeNgn: number;
+  trialDays: number;
+  defaultVideoAudience: 'all' | 'club';
+}
+
+export interface PlatformEventView {
+  id: string;
+  name: string;
+  date: string;
+  endDate: string;
+  time: string;
+  venue: string;
+  city: string;
+  description: string;
+  organiser: string;
+  entryInfo: string;
+  website: string;
+  imageUrl: string;
+  status: 'draft' | 'published';
+}
+
+export type { SkillEdits };
+
+export async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = getToken();
   const response = await fetch(path, {
     ...options,
@@ -306,6 +339,10 @@ export const gymApi = {
   follow: (userId: string) => request('/api/follows', { method: 'POST', body: JSON.stringify({ userId }) }),
   followClub: (clubId: string) => request('/api/follows', { method: 'POST', body: JSON.stringify({ clubId }) }),
   reportComment: (id: string) => request(`/api/comments/${id}/report`, { method: 'POST' }),
+  reportPost: (id: string, reason: string) => request(`/api/inspo/${id}/report`, { method: 'POST', body: JSON.stringify({ reason }) }),
+  publicSettings: () => request<PublicSettings>('/api/settings/public'),
+  platformEvents: () => request<{ events: PlatformEventView[] }>('/api/platform-events'),
+  skillCatalogue: () => request<{ edits: SkillEdits }>('/api/skills/catalogue'),
   block: (userId: string) => request('/api/blocks', { method: 'POST', body: JSON.stringify({ userId }) }),
   notifications: () => request<{ notifications: { id: string; kind: string; postId: string | null }[] }>('/api/notifications'),
 

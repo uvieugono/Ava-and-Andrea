@@ -46,7 +46,7 @@ export const ClubAwaitingApproval: React.FC<{ onLogout: () => void }> = ({ onLog
             <p className="text-sm text-[#5C4A68]">
               GymTrack checks every new club before gymnasts can choose it, to keep young gymnasts safe. We may contact you on the telephone number you gave.
             </p>
-            <p className="text-sm text-[#241628]">Your seven free days start when the club is approved, so you lose nothing by waiting.</p>
+            <p className="text-sm text-[#241628]">Your free days start when the club is approved, so you lose nothing by waiting.</p>
           </>
         )}
         <a

@@ -1,6 +1,7 @@
 import { randomBytes } from 'crypto';
 import { INITIAL_SKILLS } from '../src/data/gymData.ts';
 import { levelHasRequirements } from '../src/data/curriculumUpdates.ts';
+import { applySkillEdits } from '../src/lib/skillEdits.ts';
 import type { DatabaseShape, UserRecord } from './store.ts';
 
 export type SubmissionStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
@@ -30,6 +31,8 @@ export interface NoticeRecord {
   body: string;
   createdAt: string;
   authorName: string;
+  /** Sent by GymTrack to everyone or a group, not by the club. */
+  platform?: boolean;
 }
 
 export interface CompetitionRecord {
@@ -179,10 +182,10 @@ export function isStaff(user: UserRecord) {
 }
 
 /** Skills a gymnast has to finish before the level is complete. */
-export function requiredSkills(user: Pick<UserRecord, 'level' | 'offersBars' | 'offersBeam'>) {
+export function requiredSkills(user: Pick<UserRecord, 'level' | 'offersBars' | 'offersBeam'>, skills = INITIAL_SKILLS) {
   const level = user.level ?? 1;
   if (!levelHasRequirements(level)) return [];
-  return INITIAL_SKILLS.filter((skill) => {
+  return skills.filter((skill) => {
     if (skill.level !== level) return false;
     if (skill.optional) return false;
     if (skill.category === 'BARS' && user.offersBars === false) return false;
@@ -209,6 +212,9 @@ export function createWorkflow(
   now: () => Date,
   notifiers: Notifiers,
 ) {
+  /** The built-in skills with what administrators have changed. */
+  const catalogue = () => applySkillEdits(INITIAL_SKILLS, db.skillEdits);
+
   function latestFor(gymnastId: string, skillId: string) {
     return db.submissions
       .filter((item) => item.gymnastId === gymnastId && item.skillId === skillId)
@@ -240,7 +246,7 @@ export function createWorkflow(
   }
 
   function progressFor(user: UserRecord) {
-    const required = requiredSkills(user);
+    const required = requiredSkills(user, catalogue());
     const statuses = statusesFor(user.id);
     const approved = required.filter((skill) => statuses[skill.id]?.status === 'APPROVED').length;
     const pending = required.filter((skill) => statuses[skill.id]?.status === 'PENDING').length;
@@ -258,7 +264,7 @@ export function createWorkflow(
   function advanceIfComplete(user: UserRecord) {
     const level = user.level ?? 1;
     if (level >= 10) return false;
-    const required = requiredSkills(user);
+    const required = requiredSkills(user, catalogue());
     if (required.length === 0) return false;
     const statuses = statusesFor(user.id);
     if (!required.every((skill) => statuses[skill.id]?.status === 'APPROVED')) return false;
@@ -323,6 +329,7 @@ export function createWorkflow(
   return {
     memberView,
     progressFor,
+    skillEdits: () => db.skillEdits,
     statusesFor,
 
     async updateProfile(user: UserRecord, input: { name?: string; phone?: string; selectedClubId?: string | null; offersBars?: boolean; offersBeam?: boolean }) {
@@ -366,7 +373,7 @@ export function createWorkflow(
 
     async submitSkill(user: UserRecord, input: { skillId: string; videoUrl: string; videoName?: string }) {
       if (user.role !== 'GYMNAST') throw new Error('FORBIDDEN');
-      const skill = INITIAL_SKILLS.find((item) => item.id === input.skillId);
+      const skill = catalogue().find((item) => item.id === input.skillId);
       if (!skill) throw new Error('SKILL_NOT_FOUND');
       if (skill.level !== (user.level ?? 1)) throw new Error('WRONG_LEVEL');
       const clubId = clubOf(user);
@@ -670,8 +677,14 @@ export function createWorkflow(
     /** Notices the viewer's club has posted. Staff see their club's; gymnasts see the club they belong to or chose. */
     noticesFor(user: UserRecord) {
       const clubId = isStaff(user) ? user.clubId : clubOf(user);
-      if (!clubId) return [];
-      return db.notices.filter((item) => item.clubId === clubId).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      const fromClub = clubId ? db.notices.filter((item) => item.clubId === clubId) : [];
+      const fromGymTrack = db.announcements
+        .filter((item) => item.audience === 'everyone'
+          || (item.audience === 'gymnasts' && user.role === 'GYMNAST')
+          || (item.audience === 'clubs' && isStaff(user))
+          || (item.audience === 'club' && item.clubId === clubId))
+        .map((item) => ({ id: item.id, clubId: clubId ?? '', title: item.title, body: item.body, createdAt: item.createdAt, authorName: 'GymTrack', platform: true }));
+      return [...fromClub, ...fromGymTrack].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     },
 
     async addCompetition(staff: UserRecord, input: { gymnastId: string; name: string; date: string; events?: string[]; result?: string; comments?: string }) {

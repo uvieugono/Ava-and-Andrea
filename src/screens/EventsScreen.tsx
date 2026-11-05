@@ -1,41 +1,49 @@
-import React from 'react';
-import { PublicImage } from '../components/PublicImage';
+import React, { useEffect, useState } from 'react';
+import { gymApi, mediaUrl, PlatformEventView } from '../services/gymApi';
 
-// The flyer is kept at public/events/gymfest-flyer.jpeg (.jpg and .png also work).
+const longDate = (value: string) => new Date(`${value}T12:00:00`).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+
+/** Events published in Admin. */
 export const EventsScreen: React.FC = () => {
+  const [events, setEvents] = useState<PlatformEventView[] | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    gymApi.platformEvents().then((result) => setEvents(result.events)).catch(() => setFailed(true));
+  }, []);
+
+  const today = new Date().toISOString().slice(0, 10);
+  const upcoming = events?.filter((item) => (item.endDate || item.date) >= today).length ?? 0;
+
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-6 py-6 space-y-6">
       <header>
         <h1 className="font-display text-3xl text-[#3E1B4A]">Events</h1>
-        <p className="text-sm text-[#5C4A68] mt-1">One event is listed.</p>
+        {events && <p className="text-sm text-[#5C4A68] mt-1">{upcoming === 0 ? 'No upcoming events are listed.' : upcoming === 1 ? 'One upcoming event is listed.' : `${upcoming} upcoming events are listed.`}</p>}
       </header>
-      <article className="bg-white border border-[#E4D7EE] rounded-2xl overflow-hidden">
-        <PublicImage
-          base="/events/gymfest-flyer"
-          alt="GymFest 3.0 flyer"
-          className="w-full h-auto block"
-          fallback={
-            <div className="bg-[#F4EEF8] px-5 py-10 text-center">
-              <p className="font-display text-2xl text-[#3E1B4A]">GymFest 3.0 flyer</p>
-              <p className="text-sm text-[#5C4A68] mt-2 max-w-md mx-auto">
-                The official flyer is not in the project. Send the flyer image from gymfestchampionship.com and it will be shown here. A different picture is not used in its place.
-              </p>
+      {failed && <p className="text-sm text-red-600" role="alert">The events could not be loaded. Try again.</p>}
+      {events?.map((item) => {
+        const past = (item.endDate || item.date) < today;
+        return (
+          <article key={item.id} className={`bg-white border border-[#E4D7EE] rounded-2xl overflow-hidden ${past ? 'opacity-70' : ''}`}>
+            {item.imageUrl && <img src={mediaUrl(item.imageUrl)} alt={`${item.name} flyer`} className="w-full h-auto block" />}
+            <div className="p-5 space-y-2 text-sm text-[#241628]">
+              <h2 className="font-display text-2xl text-[#3E1B4A]">{item.name}</h2>
+              {past && <p className="text-xs font-semibold text-[#5C4A68]">This event has finished.</p>}
+              <p>{longDate(item.date)}{item.endDate ? ` to ${longDate(item.endDate)}` : ''}{item.time ? `, ${item.time}` : ''}</p>
+              {(item.venue || item.city) && <p>{[item.venue, item.city].filter(Boolean).join(', ')}</p>}
+              {item.organiser && <p>{item.organiser}</p>}
+              {item.description && <p className="whitespace-pre-wrap">{item.description}</p>}
+              {item.entryInfo && <p>{item.entryInfo}</p>}
+              {item.website && (
+                <p>
+                  <a href={item.website} target="_blank" rel="noreferrer" className="text-[#5C2A6E] underline">Visit the {item.name} website</a>
+                </p>
+              )}
             </div>
-          }
-        />
-        <div className="p-5 space-y-2 text-sm text-[#241628]">
-          <h2 className="font-display text-2xl text-[#3E1B4A]">GymFest 3.0</h2>
-          <p>Saturday 7 November 2026</p>
-          <p>The Dome, Freedom Way, Lekki Phase 1, Lagos</p>
-          <p>Convened by Tee Tumblers Gymnastics Club and the Society for the Performing Arts in Nigeria.</p>
-          <p>Published gymnast entry is ₦20,000. Spectator entry is ₦5,000.</p>
-          <p>
-            <a href="https://www.gymfestchampionship.com/" target="_blank" rel="noreferrer" className="text-[#5C2A6E] underline">
-              Visit the GymFest 3.0 website
-            </a>
-          </p>
-        </div>
-      </article>
+          </article>
+        );
+      })}
     </div>
   );
 };

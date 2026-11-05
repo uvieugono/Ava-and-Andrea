@@ -5,6 +5,8 @@ import path from 'path';
 import { randomBytes } from 'crypto';
 import { GymStore, INSPO_CATEGORIES, openStore } from './store.ts';
 import { REMOVED_CLUB_IDS, REMOVED_GYMNAST_IDS } from './dataCleanups.ts';
+import type { AdminPermission } from './admin.ts';
+import { registerAdminRoutes } from './adminRoutes.ts';
 import { openPostgresStore } from './postgres.ts';
 import { defaultNotifiers } from './notifiers.ts';
 import { defaultStorage, StorageError, type Storage } from './storage.ts';
@@ -238,6 +240,10 @@ export async function createApp(options?: { dbPath?: string; databaseUrl?: strin
         res.status(403).json({ code: 'PAYMENT_REQUIRED', payment });
         return;
       }
+      if (message === 'SUSPENDED') {
+        res.status(403).json({ code: 'SUSPENDED' });
+        return;
+      }
       failedLogins.add(key);
       res.status(401).json({ code: 'INVALID' });
     }
@@ -334,6 +340,20 @@ export async function createApp(options?: { dbPath?: string; databaseUrl?: strin
       const message = error instanceof Error ? error.message : '';
       res.status(400).json({ code: message || 'ERROR' });
     }
+  }));
+
+  app.get('/api/settings/public', (_req, res) => {
+    res.json(store.publicSettings());
+  });
+
+  app.get('/api/platform-events', (_req, res) => {
+    res.json({ events: store.publishedEvents() });
+  });
+
+  app.get('/api/skills/catalogue', asyncRoute(async (req, res) => {
+    const user = await requireAccount(req, res);
+    if (!user) return;
+    res.json({ edits: store.skillEdits() });
   }));
 
   app.get('/api/events', asyncRoute(async (req, res) => {
@@ -472,6 +492,16 @@ export async function createApp(options?: { dbPath?: string; databaseUrl?: strin
     }
   }));
 
+  app.post('/api/inspo/:id/report', asyncRoute(async (req, res) => {
+    const user = await requirePaid(req, res);
+    if (!user) return;
+    try {
+      res.json(await store.reportPost(user, req.params.id, req.body?.reason));
+    } catch {
+      res.status(404).json({ code: 'NOT_FOUND' });
+    }
+  }));
+
   app.post('/api/comments/:id/report', asyncRoute(async (req, res) => {
     const user = await requirePaid(req, res);
     if (!user) return;
@@ -553,24 +583,28 @@ export async function createApp(options?: { dbPath?: string; databaseUrl?: strin
     return user;
   }
 
-  async function requireOperator(req: AuthedRequest, res: Response) {
+  /** Any administrator, and with permissions named, one who holds at least one of them. */
+  async function requireAdmin(req: AuthedRequest, res: Response, ...permissions: AdminPermission[]) {
     const user = await requireAccount(req, res);
     if (!user) return null;
-    if (!store.publicUser(user).operator) {
+    const held = store.adminPermissions(user);
+    if (!store.publicUser(user).operator || (permissions.length > 0 && !permissions.some((item) => held.includes(item)))) {
       res.status(403).json({ code: 'FORBIDDEN' });
       return null;
     }
     return user;
   }
 
+  registerAdminRoutes(app, { store, storage, asyncRoute, fail, requireAdmin });
+
   app.get('/api/operator/clubs', asyncRoute(async (req, res) => {
-    const operator = await requireOperator(req, res);
+    const operator = await requireAdmin(req, res, 'clubs', 'payments');
     if (!operator) return;
     res.json({ clubs: store.operatorClubs(operator) });
   }));
 
   app.post('/api/operator/clubs/:id/activate', asyncRoute(async (req, res) => {
-    const operator = await requireOperator(req, res);
+    const operator = await requireAdmin(req, res, 'clubs', 'payments');
     if (!operator) return;
     try {
       res.status(201).json({ subscription: await store.activateClubSubscription(operator, req.params.id, req.body ?? {}) });
@@ -580,7 +614,7 @@ export async function createApp(options?: { dbPath?: string; databaseUrl?: strin
   }));
 
   app.post('/api/operator/clubs/:id/approve', asyncRoute(async (req, res) => {
-    const operator = await requireOperator(req, res);
+    const operator = await requireAdmin(req, res, 'clubs');
     if (!operator) return;
     try {
       res.json({ club: await store.approveClub(operator, req.params.id) });
@@ -590,7 +624,7 @@ export async function createApp(options?: { dbPath?: string; databaseUrl?: strin
   }));
 
   app.post('/api/operator/clubs/:id/reject', asyncRoute(async (req, res) => {
-    const operator = await requireOperator(req, res);
+    const operator = await requireAdmin(req, res, 'clubs');
     if (!operator) return;
     try {
       res.json({ club: await store.rejectClub(operator, req.params.id, req.body?.reason) });
@@ -600,7 +634,7 @@ export async function createApp(options?: { dbPath?: string; databaseUrl?: strin
   }));
 
   app.post('/api/operator/password-reset', asyncRoute(async (req, res) => {
-    const operator = await requireOperator(req, res);
+    const operator = await requireAdmin(req, res, 'users');
     if (!operator) return;
     try {
       res.status(201).json(await store.operatorPasswordReset(operator, req.body?.email));
@@ -853,7 +887,8 @@ export async function createApp(options?: { dbPath?: string; databaseUrl?: strin
       res.status(415).json({ code: 'FILE_TYPE' });
       return null;
     }
-    if (isDocument && !(user.role === 'CLUB_ADMIN' || user.role === 'COACH')) {
+    const eventPicture = mime.startsWith('image/') && store.adminPermissions(user).includes('events');
+    if (isDocument && !(user.role === 'CLUB_ADMIN' || user.role === 'COACH' || eventPicture)) {
       res.status(403).json({ code: 'FORBIDDEN' });
       return null;
     }
@@ -861,7 +896,7 @@ export async function createApp(options?: { dbPath?: string; databaseUrl?: strin
       res.status(413).json({ code: 'FILE_TOO_LARGE' });
       return null;
     }
-    const scope: 'public' | 'private' = isVideo && req.query.scope === 'public' ? 'public' : 'private';
+    const scope: 'public' | 'private' = (isVideo || eventPicture) && req.query.scope === 'public' ? 'public' : 'private';
     const fileName = `${randomBytes(12).toString('hex')}${isVideo ? VIDEO_EXT[mime] : DOCUMENT_MIME[mime]}`;
     return { mime, scope, fileName, displayName };
   }

@@ -39,6 +39,7 @@ export function requiredSkillsFor(skills: Skill[], level: number, offersBars: bo
 export function matchingTutorial(skill: Skill) {
   const tutorial = skill.tutorial;
   if (!tutorial?.videoId || !tutorial.title) return null;
+  if (skill.videoChosen) return tutorial;
   const title = tutorial.title.toLowerCase();
   const words = skill.name
     .toLowerCase()
